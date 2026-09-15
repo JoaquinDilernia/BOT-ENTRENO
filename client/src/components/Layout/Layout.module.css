@@ -1,0 +1,300 @@
+.shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+/* ---- Sidebar ---- */
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4) 0;
+  transition: width var(--transition-fast);
+}
+
+/* El colapsado a solo-íconos es una preferencia de escritorio — se aplica
+   solo a partir de 769px; en mobile el texto siempre se muestra completo. */
+@media (min-width: 769px) {
+  .sidebarCollapsed { width: 68px; }
+  .sidebarCollapsed .brand { justify-content: center; padding: var(--space-2) 0 var(--space-3); }
+  .sidebarCollapsed .brandText { display: none; }
+  .sidebarCollapsed .navItem { justify-content: center; padding: var(--space-2); }
+  .sidebarCollapsed .navLabel { display: none; }
+  .sidebarCollapsed .sidebarFooter { flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-2); }
+  .sidebarCollapsed .agentInfo { justify-content: center; }
+  .sidebarCollapsed .agentName { display: none; }
+  .sidebarCollapsed .logoutBtn { padding: 2px 8px; }
+}
+
+.collapseBtn {
+  align-self: flex-end;
+  margin: 0 var(--space-4) var(--space-3);
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+.collapseBtn:hover { background: var(--color-surface); color: var(--color-text); border-color: var(--color-text-muted); }
+.sidebarCollapsed .collapseBtn { align-self: center; margin: 0 0 var(--space-3); }
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5) var(--space-6);
+}
+
+.brandLogo {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+  letter-spacing: -0.5px;
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brandName {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.3px;
+}
+
+.brandSub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+  font-weight: 400;
+}
+
+/* ---- Nav ---- */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-3);
+  flex: 1;
+  /* Con muchos items el menú tiene que scrollear dentro de sí mismo en vez de
+     desbordar la sidebar y tapar el footer (min-height:0 = fix del clásico
+     bug de flexbox donde el hijo no se deja achicar bajo su contenido). */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.navItem:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.navItemActive {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary-dark);
+}
+
+.navItemActive .navIcon {
+  color: var(--color-primary-dark);
+}
+
+.navIcon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.navItemActive .navIcon {
+  opacity: 1;
+}
+
+/* ---- Footer ---- */
+.sidebarFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  border-top: 1px solid var(--color-border);
+  margin-top: auto;
+}
+
+.agentInfo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: opacity var(--transition-fast);
+}
+.agentInfo:hover { opacity: 0.75; }
+
+.agentName {
+  font-weight: 500;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logoutBtn {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+.logoutBtn:hover { color: var(--color-text); border-color: var(--color-text-muted); }
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  box-shadow: 0 0 0 2px var(--color-success-bg);
+  flex-shrink: 0;
+}
+
+/* ---- Main ---- */
+.main {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ==================== MOBILE ==================== */
+
+/* Hidden on desktop, shown on mobile */
+.mobileHeader { display: none; }
+.hamburger    { display: none; }
+.mobileBrand  { display: none; }
+
+/* Overlay always in DOM when menuOpen=true (conditional render), styled here */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 199;
+}
+
+/* sidebarOpen only has effect on mobile (transform is overridden) */
+.sidebarOpen {}
+
+@media (max-width: 768px) {
+  .mobileHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    height: 52px;
+    padding: 0 var(--space-4);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+
+  .hamburger {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+  }
+  .hamburger span {
+    display: block;
+    width: 18px;
+    height: 2px;
+    background: var(--color-text);
+    border-radius: 2px;
+  }
+
+  .mobileBrand {
+    display: block;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    height: 100dvh;
+    width: min(280px, 80vw);
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: none;
+    overflow-y: auto;
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+  }
+
+  .collapseBtn { display: none; }
+
+  .main {
+    padding-top: 52px;
+  }
+}

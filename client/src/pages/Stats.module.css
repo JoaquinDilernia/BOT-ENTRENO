@@ -1,0 +1,360 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-bg);
+  overflow-y: auto;
+}
+
+.header {
+  padding: var(--space-6) var(--space-8) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headerControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.rangeInputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rangeSep {
+  color: var(--color-text-faint);
+  font-size: var(--font-size-sm);
+}
+
+.dateInput {
+  font-size: var(--font-size-sm);
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0 0 var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* Period tabs */
+.tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 5px var(--space-4);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tabActive {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.loading {
+  padding: var(--space-8);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.error {
+  padding: var(--space-8);
+  color: var(--color-status-urgent);
+  font-size: var(--font-size-sm);
+}
+
+/* Body */
+.body {
+  padding: var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* KPI rows */
+.kpiRow4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+}
+
+.kpiCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kpiTitle {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.kpiValue {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.kpiSub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+}
+
+.kpiHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+
+/* Sections */
+.section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+/* Trend bar chart */
+.trendChart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 120px; /* CHART_H(80) + label(14) + count(14) + gaps */
+}
+
+.trendCol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  height: 100%;
+}
+
+.trendCount {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  line-height: 1;
+  min-height: 12px;
+  text-align: center;
+}
+
+.trendBarWrap {
+  width: 100%;
+  height: 80px; /* matches CHART_H */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: var(--color-surface-alt);
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+}
+
+.trendBar {
+  width: 100%;
+  background: var(--color-primary);
+  border-radius: 3px 3px 0 0;
+  transition: height 0.25s ease;
+}
+
+.trendLabel {
+  font-size: 10px;
+  color: var(--color-text-faint);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  min-height: 14px;
+  line-height: 14px;
+}
+
+/* Agent rows */
+.agentRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.agentRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.agentLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 150px;
+  flex-shrink: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.agentName {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agentSub {
+  font-size: 10px;
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+/* Shared horizontal bar */
+.hBars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.hBarRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.hBarLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  width: 76px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hBarTrack {
+  flex: 1;
+  height: 8px;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.hBarFill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+  min-width: 3px;
+}
+
+.hBarNum {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-weight: 600;
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-faint);
+  margin: 0;
+}
+
+/* Daily breakdown table */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+}
+
+.table th,
+.table td {
+  padding: 6px var(--space-3);
+  text-align: right;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.table th:first-child,
+.table td:first-child {
+  text-align: left;
+}
+
+.table thead th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+
+.table tbody tr:hover {
+  background: var(--color-surface-alt);
+}

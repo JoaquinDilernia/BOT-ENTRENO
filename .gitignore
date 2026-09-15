@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*/.env
+*/.env.local
+*/.env.production
+*/.env.development
+dist/
+.DS_Store
+*.log
+.claude/
+.superpowers/
+.worktrees/
