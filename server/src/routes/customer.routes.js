@@ -3,6 +3,7 @@ import multer from 'multer';
 import {
   getCustomerProfile,
   updateCustomerNotes,
+  enrichCustomerFromTiendaNube,
   listCustomers,
   listAllTags,
   createCustomer,
@@ -11,6 +12,7 @@ import {
   parseCsv,
   importCustomersCsv,
   exportCustomersCsv,
+  syncAllTiendaNubeCustomers,
 } from '../services/customer.service.js';
 import { normalizeArgPhone } from './conversation.routes.js';
 
@@ -24,8 +26,27 @@ router.get('/', async (req, res) => {
   try {
     const { q, channel } = req.query;
     const tags = req.query.tags ? String(req.query.tags).split(',').filter(Boolean) : undefined;
-    const customers = await listCustomers({ q, channel, tags });
+    const customers = await listCustomers({
+      q, channel, tags,
+      hasOrders: req.query.hasOrders === 'true' ? true : undefined,
+      spentMin: req.query.spentMin,
+      spentMonths: req.query.spentMonths,
+      product: req.query.product,
+      productMonths: req.query.productMonths,
+      orderCountMin: req.query.orderCountMin,
+      lastOrderMaxDays: req.query.lastOrderMaxDays,
+      lastOrderMinDays: req.query.lastOrderMinDays,
+    });
     res.json({ customers });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sync masivo desde Tienda Nube — puede tardar (recorre todos los pedidos).
+router.post('/sync-tiendanube', async (req, res) => {
+  try {
+    res.json(await syncAllTiendaNubeCustomers());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -110,6 +131,16 @@ router.delete('/:contactId', async (req, res) => {
   try {
     await deleteCustomer(req.params.contactId);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:contactId/sync', async (req, res) => {
+  try {
+    await enrichCustomerFromTiendaNube(req.params.contactId, true);
+    const profile = await getCustomerProfile(req.params.contactId);
+    res.json({ ok: true, customer: profile });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

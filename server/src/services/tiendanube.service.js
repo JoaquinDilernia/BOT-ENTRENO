@@ -271,6 +271,50 @@ export async function searchProductsByCategory(categoryId) {
 }
 
 /**
+ * Recorre TODOS los pedidos de la tienda paginando, y los agrupa por cliente.
+ * Se usa para el sync masivo de contactos (traer a todos los que compraron y
+ * tienen teléfono, aunque nunca hayan escrito al bot) — mismo patrón que
+ * BOT-ALTORANCHO (ver [[project-bots]]).
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.maxPages=40]  tope de seguridad (40 * 200 = 8000 pedidos)
+ * @returns {Promise<Array<{ tnCustomer: object, orders: object[] }>>}
+ */
+export async function fetchAllCustomersWithOrders({ maxPages = 40 } = {}) {
+  const PER_PAGE = 200;
+  const byCustomer = new Map();
+  for (let page = 1; page <= maxPages; page++) {
+    let batch;
+    try {
+      const { data } = await client.get('/orders', {
+        params: {
+          fields: 'id,number,status,payment_status,shipping_status,created_at,total,products,customer',
+          sort_by: 'created_at',
+          sort_direction: 'desc',
+          per_page: PER_PAGE,
+          page,
+        },
+      });
+      batch = data ?? [];
+    } catch (err) {
+      console.error(`[tiendanube] fetchAllCustomersWithOrders página ${page}:`, err.message);
+      break;
+    }
+    if (batch.length === 0) break;
+    for (const order of batch) {
+      const c = order.customer;
+      if (!c?.id) continue;
+      if (!byCustomer.has(c.id)) {
+        byCustomer.set(c.id, { tnCustomer: { id: c.id, name: c.name ?? null, email: c.email ?? null, phone: c.phone ?? null }, orders: [] });
+      }
+      byCustomer.get(c.id).orders.push(order);
+    }
+    if (batch.length < PER_PAGE) break;
+  }
+  return [...byCustomer.values()];
+}
+
+/**
  * Busca un cliente por teléfono en Tienda Nube.
  * @param {string} phone
  * @returns {Promise<object|null>}

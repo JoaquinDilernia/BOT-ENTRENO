@@ -141,10 +141,10 @@ export async function generateConversationSummary(messages) {
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
   const {
     knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null,
-    customerContext = null, availableLabels = [], botConfig = {}, imageData = null, areas = [],
+    customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, areas = [],
   } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, areas);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, areas, customerTags);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   const response = await callAnthropicAPI({
@@ -158,7 +158,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   return extractText(response);
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], areas = []) {
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], areas = [], customerTags = []) {
   const botName = botConfig.botName || 'Entreno';
   const businessName = botConfig.businessName || 'Entreno';
   const personality = botConfig.botPersonality ||
@@ -220,6 +220,24 @@ Guía:
 - [LABEL:Reclamo] → queja o insatisfacción.
 Podés combinar varias etiquetas si aplica.`;
   }
+
+  // --- Tags de CONTACTO (persisten entre conversaciones, sirven para segmentar
+  //     difusiones). A diferencia de las etiquetas de conversación, NO son
+  //     obligatorios: solo taggeás si el mensaje da una señal clara.
+  {
+    const guide = (botConfig.customerTagsGuide || '').trim();
+    const existing = (customerTags || []).filter(Boolean);
+    prompt += `\n\n--- TAGS DE CONTACTO ---
+Si en el mensaje aparece una señal CLARA sobre quién es este cliente, agregale un tag con [TAG:nombre] (invisible para el cliente). NO inventes si no hay señal — es opcional.
+Categorías (basadas en el catálogo real de Entreno):
+- Interés de producto: Whey Protein, Plant Protein, Creatina, Pre-entreno, BCAA/EAA, Quemadores, Glutamina, Colágeno, Vitaminas, Ropa.
+- Objetivo: Ganar masa muscular, Perder grasa, Mejorar entrenamiento, Salud & bienestar, Aumentar energía.
+- Comportamiento: Recurrente, Primera compra, Reclamó, Alto gasto.`;
+    if (existing.length) prompt += `\nTags que ya se usan (reusá estos si aplican, respetando cómo están escritos): ${existing.join(', ')}.`;
+    prompt += `\nSi ninguno encaja y la señal es clara, creá uno con [NEW_TAG:nombre].`;
+    if (guide) prompt += `\nGuía del negocio:\n${guide}`;
+  }
+
   return prompt;
 }
 

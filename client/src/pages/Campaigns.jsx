@@ -4,7 +4,8 @@ import styles from './Campaigns.module.css';
 
 const STATUS_LABEL = { draft: 'Borrador', sending: 'Enviando…', sent: 'Enviada' };
 const STATUS_CLASS = { draft: 'statusDraft', sending: 'statusSending', sent: 'statusSent' };
-const DEFAULT_FORM = { name: '', templateId: '', targetUrl: '', segment: { q: '', channel: '', tags: [] } };
+const EMPTY_SEGMENT = { q: '', channel: '', tags: [], hasOrders: false, spentMin: '', spentMonths: '12', product: '', productMonths: '12', orderCountMin: '', lastOrderMaxDays: '', lastOrderMinDays: '' };
+const DEFAULT_FORM = { name: '', templateId: '', targetUrl: '', segment: { ...EMPTY_SEGMENT } };
 
 function formatDate(ts) {
   if (!ts) return '—';
@@ -60,11 +61,11 @@ export default function Campaigns() {
   }
 
   function openCreate() {
-    setForm({ ...DEFAULT_FORM, segment: { q: '', channel: '', tags: [] } });
+    setForm({ ...DEFAULT_FORM, segment: { ...EMPTY_SEGMENT } });
     setParams([]);
     setPreview(null);
     setError('');
-    refreshPreview({ q: '', channel: '', tags: [] });
+    refreshPreview({ ...EMPTY_SEGMENT });
   }
 
   function cancel() { setForm(null); setDetail(null); setError(''); }
@@ -212,7 +213,9 @@ export default function Campaigns() {
               <div className={styles.field}>
                 <label className={styles.label}>Parámetros de la plantilla</label>
                 <p className={styles.hint}>
-                  Podés usar <code>{'{{nombre}}'}</code> para el nombre del contacto
+                  Podés usar <code>{'{{nombre}}'}</code> para el nombre del contacto,{' '}
+                  <code>{'{{pedidos}}'}</code> para su cantidad de compras en Tienda Nube,{' '}
+                  <code>{'{{gastado}}'}</code> para el total gastado
                   {form.targetUrl && <> y <code>{'{{link}}'}</code> para el link trackeado</>}.
                 </p>
                 {selectedTemplate.params.map((desc, i) => (
@@ -265,6 +268,39 @@ export default function Campaigns() {
                   ))}
                 </div>
               )}
+
+              <label className={styles.ordersFilterLabel}>
+                <input type="checkbox" checked={!!form.segment.hasOrders} onChange={e => setSegment({ hasOrders: e.target.checked })} />
+                Ya compró (Tienda Nube)
+              </label>
+
+              <div className={styles.advPanel}>
+                <p className={styles.advTitle}>Segmentar por compras de Tienda Nube (opcional)</p>
+                <div className={styles.advRow}>
+                  <span className={styles.advLabel}>Gastó ≥ $</span>
+                  <input className={styles.advInput} type="number" min="0" value={form.segment.spentMin} onChange={e => setSegment({ spentMin: e.target.value })} placeholder="100000" />
+                  <span className={styles.advLabel}>en los últimos</span>
+                  <input className={styles.advInput} type="number" min="1" value={form.segment.spentMonths} onChange={e => setSegment({ spentMonths: e.target.value })} />
+                  <span className={styles.advLabel}>meses</span>
+                </div>
+                <div className={styles.advRow}>
+                  <span className={styles.advLabel}>Compró</span>
+                  <input className={`${styles.advInput} ${styles.advInputWide}`} value={form.segment.product} onChange={e => setSegment({ product: e.target.value })} placeholder="nombre del producto" />
+                  <span className={styles.advLabel}>en los últimos</span>
+                  <input className={styles.advInput} type="number" min="1" value={form.segment.productMonths} onChange={e => setSegment({ productMonths: e.target.value })} />
+                  <span className={styles.advLabel}>meses</span>
+                </div>
+                <div className={styles.advRow}>
+                  <span className={styles.advLabel}>Tiene ≥</span>
+                  <input className={styles.advInput} type="number" min="1" value={form.segment.orderCountMin} onChange={e => setSegment({ orderCountMin: e.target.value })} placeholder="3" />
+                  <span className={styles.advLabel}>pedidos  ·  última compra hace ≤</span>
+                  <input className={styles.advInput} type="number" min="1" value={form.segment.lastOrderMaxDays} onChange={e => setSegment({ lastOrderMaxDays: e.target.value })} placeholder="30" />
+                  <span className={styles.advLabel}>días  ·  hace ≥</span>
+                  <input className={styles.advInput} type="number" min="1" value={form.segment.lastOrderMinDays} onChange={e => setSegment({ lastOrderMinDays: e.target.value })} placeholder="90" />
+                  <span className={styles.advLabel}>días</span>
+                </div>
+              </div>
+
               <p className={styles.previewCount}>
                 {previewing ? 'Calculando…' : preview ? (
                   <>📤 <strong>{preview.whatsappCount}</strong> contactos de WhatsApp van a recibir este mensaje{preview.total !== preview.whatsappCount ? ` (de ${preview.total} en el segmento)` : ''}.</>

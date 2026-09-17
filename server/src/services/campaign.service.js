@@ -118,8 +118,27 @@ export async function getCampaignSends(campaignId) {
 /** Resuelve cuántos/quiénes matchean un segmento — usado tanto para la
     previsualización como para el envío real, así el conteo que ve el agente
     antes de mandar es exactamente la lista que va a recibir el mensaje. */
+function segmentToFilters(segment = {}) {
+  return {
+    q: segment.q,
+    channel: segment.channel,
+    tags: segment.tags,
+    hasOrders: segment.hasOrders,
+    spentMin: segment.spentMin,
+    spentMonths: segment.spentMonths,
+    product: segment.product,
+    productMonths: segment.productMonths,
+    orderCountMin: segment.orderCountMin,
+    lastOrderMaxDays: segment.lastOrderMaxDays,
+    lastOrderMinDays: segment.lastOrderMinDays,
+  };
+}
+
+/** Resuelve cuántos/quiénes matchean un segmento — usado tanto para la
+    previsualización como para el envío real, así el conteo que ve el agente
+    antes de mandar es exactamente la lista que va a recibir el mensaje. */
 export async function resolveSegment(segment = {}) {
-  return listCustomers({ q: segment.q, channel: segment.channel, tags: segment.tags });
+  return listCustomers(segmentToFilters(segment));
 }
 
 export async function createCampaign({ name, templateName, language, category, paramsTemplate, targetUrl, segment, createdBy }) {
@@ -129,6 +148,7 @@ export async function createCampaign({ name, templateName, language, category, p
     throw e;
   }
   const db = getDb();
+  const num = (v) => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
   const doc = {
     name: name.trim(),
     templateName: templateName.trim(),
@@ -136,7 +156,19 @@ export async function createCampaign({ name, templateName, language, category, p
     category: category ?? null,
     paramsTemplate: Array.isArray(paramsTemplate) ? paramsTemplate : [],
     targetUrl: targetUrl?.trim() || null,
-    segment: { q: segment?.q ?? null, channel: segment?.channel ?? null, tags: segment?.tags ?? [] },
+    segment: {
+      q: segment?.q ?? null,
+      channel: segment?.channel ?? null,
+      tags: segment?.tags ?? [],
+      hasOrders: !!segment?.hasOrders,
+      spentMin: num(segment?.spentMin),
+      spentMonths: num(segment?.spentMonths) ?? 12,
+      product: segment?.product?.trim() || null,
+      productMonths: num(segment?.productMonths) ?? 12,
+      orderCountMin: num(segment?.orderCountMin),
+      lastOrderMaxDays: num(segment?.lastOrderMaxDays),
+      lastOrderMinDays: num(segment?.lastOrderMinDays),
+    },
     status: 'draft',
     createdBy: createdBy ?? null,
     createdAt: new Date(),
@@ -159,7 +191,9 @@ export async function deleteCampaign(id) {
 function interpolate(template, contact, link) {
   return (template ?? '')
     .replace(/\{\{\s*nombre\s*\}\}/gi, contact.contactName || 'Cliente')
-    .replace(/\{\{\s*link\s*\}\}/gi, link ?? '');
+    .replace(/\{\{\s*link\s*\}\}/gi, link ?? '')
+    .replace(/\{\{\s*pedidos\s*\}\}/gi, String(contact.tnOrderCount ?? 0))
+    .replace(/\{\{\s*gastado\s*\}\}/gi, contact.tnTotalSpent != null ? String(Math.round(contact.tnTotalSpent)) : '0');
 }
 
 /**

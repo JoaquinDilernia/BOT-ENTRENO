@@ -23,8 +23,7 @@ router.get('/', async (req, res) => {
 // función que usa el envío real, así el conteo que ve el agente es exacto.
 router.post('/preview-segment', async (req, res) => {
   try {
-    const { q, channel, tags } = req.body.segment ?? {};
-    const recipients = await resolveSegment({ q, channel, tags });
+    const recipients = await resolveSegment(req.body.segment ?? {});
     const whatsappOnly = recipients.filter(c => c.channel === 'whatsapp');
     res.json({
       total: recipients.length,

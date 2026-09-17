@@ -236,3 +236,41 @@
   .tableHead { display: none; }
   .tableRow { grid-template-columns: 1fr; gap: var(--space-2); }
 }
+
+.ordersFilterLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-block-start: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  width: fit-content;
+}
+
+.advPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.advTitle { font-size: var(--font-size-xs); font-weight: 600; color: var(--color-text-muted); margin: 0; text-transform: uppercase; letter-spacing: 0.5px; }
+.advRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.advLabel { font-size: var(--font-size-sm); color: var(--color-text-muted); }
+.advInput {
+  height: 30px;
+  width: 84px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  outline: none;
+}
+.advInput:focus { border-color: var(--color-primary-light); }
+.advInputWide { width: 180px; }

@@ -12,7 +12,7 @@ import {
   addLabelToConversation,
 } from './conversation.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64 } from './meta.service.js';
-import { getOrCreateCustomer, buildCustomerContext, linkCustomerFromOrder } from './customer.service.js';
+import { getOrCreateCustomer, buildCustomerContext, linkCustomerFromOrder, addTagsToCustomer, listAllTags } from './customer.service.js';
 import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveAreas } from './area.service.js';
 import { getDb } from './firebase.service.js';
@@ -189,6 +189,20 @@ function parseLabelMarkers(text) {
   return { labels, newLabels, cleanText };
 }
 
+// [TAG:nombre]     -> agrega un tag EXISTENTE al contacto (doc de customers)
+// [NEW_TAG:nombre] -> tag nuevo (mismo efecto de guardado; el split existe solo
+//                     para poder loguear/distinguir como en los labels)
+//
+// Los tags de contacto persisten entre conversaciones y se usan para segmentar
+// difusiones — distinto de los [LABEL:...], que clasifican la conversación.
+function parseCustomerTagMarkers(text) {
+  const s = typeof text === 'string' ? text : '';
+  const tags = [...s.matchAll(/\[TAG:\s*([^\]]+?)\s*\]/gi)].map(m => m[1].trim()).filter(Boolean);
+  const newTags = [...s.matchAll(/\[NEW_TAG:\s*([^\]]+?)\s*\]/gi)].map(m => m[1].trim()).filter(Boolean);
+  const cleanText = s.replace(/\[(NEW_)?TAG:\s*[^\]]+?\s*\]/gi, '').replace(/[ \t]{2,}/g, ' ').trim();
+  return { tags, newTags, cleanText };
+}
+
 // Claude escribe negrita en Markdown estándar (**texto**), pero WhatsApp
 // solo reconoce un asterisco de cada lado (*texto*) — con doble asterisco
 // el cliente ve los asteriscos literales en vez de texto en negrita.
@@ -242,9 +256,9 @@ function resolveReplyTo(history, replyToWaMsgId) {
 async function processIncomingMessageInternal(msg) {
   const { channel, from, text, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
 
-  let conversation, history, knowledgeBase, customer, availableLabels, configDoc, areas;
+  let conversation, history, knowledgeBase, customer, availableLabels, configDoc, areas, customerTags;
   try {
-    [conversation, history, knowledgeBase, customer, availableLabels, configDoc, areas] = await Promise.all([
+    [conversation, history, knowledgeBase, customer, availableLabels, configDoc, areas, customerTags] = await Promise.all([
       getOrCreateConversation(from, channel, contactName),
       getConversationHistory(from),
       getKnowledgeBasePrompt().catch(() => ''),
@@ -252,6 +266,7 @@ async function processIncomingMessageInternal(msg) {
       getAllLabels().catch(() => []),
       getDb().collection('bot-entreno_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
       getActiveAreas().catch(() => []),
+      listAllTags().catch(() => []),
     ]);
   } catch (err) {
     console.error('[bot] Error cargando contexto para', from, err.message);
@@ -391,6 +406,7 @@ async function processIncomingMessageInternal(msg) {
       productInfo,
       customerContext,
       availableLabels: availableLabels.map(l => l.name),
+      customerTags,
       botConfig,
       imageData,
       areas,
@@ -409,13 +425,22 @@ async function processIncomingMessageInternal(msg) {
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, areas);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
-  const cleanText = toWhatsAppBold(textAfterLabels);
+  const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
+  const cleanText = toWhatsAppBold(textAfterTags);
 
   await appendMessage(from, { role: 'assistant', content: cleanText });
 
   if (botNewLabels.length > 0) {
     await Promise.all(botNewLabels.map(l => createLabel(l, '#6b7280').then(() => addLabelToConversation(from, l))));
     console.log(`[bot] Nuevas labels creadas y aplicadas a ${from}:`, botNewLabels);
+  }
+  const allBotTags = [...botTags, ...botNewTags];
+  if (allBotTags.length > 0) {
+    const applied = await addTagsToCustomer(from, allBotTags).catch(err => {
+      console.error(`[bot] Error agregando tags al contacto ${from}:`, err.message);
+      return [];
+    });
+    if (applied.length) console.log(`[bot] Tags de contacto aplicados a ${from}:`, applied);
   }
   if (botLabels.length > 0) {
     await Promise.all(botLabels.map(l => addLabelToConversation(from, l)));

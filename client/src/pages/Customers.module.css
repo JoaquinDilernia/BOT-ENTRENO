@@ -273,7 +273,7 @@
 
 .tableHead {
   display: grid;
-  grid-template-columns: 2.2fr 1fr 1.6fr 1fr 1fr;
+  grid-template-columns: 2fr 0.9fr 0.9fr 1.4fr 1fr 1fr;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-5);
   background: var(--color-surface-alt);
@@ -287,7 +287,7 @@
 
 .tableRow {
   display: grid;
-  grid-template-columns: 2.2fr 1fr 1.6fr 1fr 1fr;
+  grid-template-columns: 2fr 0.9fr 0.9fr 1.4fr 1fr 1fr;
   gap: var(--space-3);
   align-items: center;
   padding: var(--space-3) var(--space-5);
@@ -428,3 +428,50 @@
   .tableRow { grid-template-columns: 1fr; gap: var(--space-2); }
   .rowActions { justify-content: flex-start; }
 }
+
+.ordersFilterLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ---- Panel de segmentación avanzada por compras (Tienda Nube) ---- */
+.advPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.advRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.advLabel { font-size: var(--font-size-sm); color: var(--color-text-muted); }
+.advInput {
+  height: 32px;
+  width: 90px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  outline: none;
+}
+.advInput:focus { border-color: var(--color-primary-light); }
+.advInputWide { width: 200px; }
+.hint { font-size: var(--font-size-xs); color: var(--color-text-faint); margin: 0; line-height: 1.5; }
