@@ -250,6 +250,27 @@ export async function searchProducts(query) {
 }
 
 /**
+ * Trae productos de una categoría puntual de TiendaNube. A diferencia de
+ * `searchProducts` (que matchea texto contra el nombre), esto devuelve TODO
+ * lo publicado en la categoría — más confiable para consultas por rubro
+ * ("qué pre-entreno tenés") donde el nombre del producto no necesariamente
+ * contiene la palabra que usó el cliente.
+ * @param {number} categoryId
+ * @returns {Promise<Array>}
+ */
+export async function searchProductsByCategory(categoryId) {
+  try {
+    const { data } = await client.get('/products', {
+      params: { category_id: categoryId, published: true, fields: 'id,name,description,images,variants', per_page: 50 },
+    });
+    return data ?? [];
+  } catch (err) {
+    console.error('[tiendanube] Error buscando productos por categoría:', err.message);
+    return [];
+  }
+}
+
+/**
  * Busca un cliente por teléfono en Tienda Nube.
  * @param {string} phone
  * @returns {Promise<object|null>}

@@ -17,7 +17,7 @@ import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveAreas } from './area.service.js';
 import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
-import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, formatStockInfo, formatProductsSummary } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, searchProductsByCategory, formatStockInfo, formatProductsSummary } from './tiendanube.service.js';
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /reclamo/i, /estafa/i, /fraude/i,
@@ -44,6 +44,7 @@ const STOCK_PATTERNS = [
   /\bstock\b/i,
   /\bdisponib/i,
   /tienen\s+\w+/i,
+  /ten[eé]s\s+\w+/i,
   /hay\s+(?:algún|alguna|algun|alguna)\b/i,
   /\bqueda\b|\bquedan\b/i,
   // Precio — se resuelve con la misma búsqueda a TiendaNube que stock,
@@ -54,6 +55,42 @@ const STOCK_PATTERNS = [
   /\bvale\b|\bvalen\b/i,
   /cu[aá]nto\s+(?:sale|cuesta|vale|est[aá])/i,
 ];
+
+// Categorías reales del catálogo de TiendaNube de Entreno (relevadas via
+// GET /categories el 2026-09-17 — id fijo por categoría, no cambia salvo que
+// el cliente reorganice el árbol de categorías a mano en el admin de TN).
+// Mapeadas por sinónimo/jerga habitual de suplementos para no depender de
+// que el cliente escriba el nombre exacto del producto: buscar por
+// categoría trae TODO lo publicado ahí, a diferencia de la búsqueda por
+// texto (searchProducts) que solo matchea si la palabra está en el nombre.
+const CATEGORY_SYNONYMS = [
+  { re: /\bwhey\b/i, categoryId: 31492713 },              // WHEY PROTEIN
+  { re: /\bplant\s*prote[ií]na?\b|prote[ií]na\s+vegetal/i, categoryId: 31492714 }, // PLANT PROTEIN
+  { re: /\bprote[ií]nas?\b/i, categoryId: 31492528 },      // PROTEINAS (grupo completo)
+  { re: /\bcreatina\b/i, categoryId: 31492709 },
+  { re: /\bpre[\s-]?(entreno|workout)\b|\bpre[\s-]?intra\b/i, categoryId: 31493040 }, // PRE & INTRA ENTRENO
+  { re: /\bbcaas?\b|\beaas?\b|\baminos?\b|amino[aá]cidos?/i, categoryId: 31492710 },  // EEAs & BCAAs
+  { re: /\bpump\b|vasodilatador/i, categoryId: 31493043 },
+  { re: /\bquemador(es)?\b|quema\s*grasas?\b/i, categoryId: 31493051 },
+  { re: /\bl[\s-]?carnitina\b/i, categoryId: 31493053 },
+  { re: /\bcafeina\b/i, categoryId: 31492698 },
+  { re: /\bcla\b/i, categoryId: 31493116 },
+  { re: /\bglutamina\b/i, categoryId: 31492706 },
+  { re: /\bcol[aá]geno\b/i, categoryId: 31492711 },
+  { re: /\bmultivitam[ií]nico/i, categoryId: 31492704 },
+  { re: /\bvitaminas?\b/i, categoryId: 31492690 },         // VITAMINAS & SUPLEMENTOS (grupo)
+  { re: /\bomega\b|fish\s*oil/i, categoryId: 31493062 },
+  { re: /\bbarra(s)?\s+(de\s+)?prote[ií]na\b|protein\s*bars?/i, categoryId: 31493050 },
+  { re: /\bshaker\b|\bbotella\b/i, categoryId: 31493054 },
+  { re: /\bropa\b|\bremera\b|\bindumentaria\b/i, categoryId: 36439149 },
+  { re: /\bcintur[oó]n(es)?\b/i, categoryId: 38383183 },
+  { re: /\bmu[ñn]equera(s)?\b/i, categoryId: 38383184 },
+];
+
+function matchCategorySynonym(text) {
+  const hit = CATEGORY_SYNONYMS.find(({ re }) => re.test(text));
+  return hit?.categoryId ?? null;
+}
 
 const PRODUCT_INFO_PATTERNS = [
   /\bsabor(es)?\b/i,
@@ -431,14 +468,23 @@ async function processIncomingMessageInternal(msg) {
 }
 
 async function resolveStockContext(text) {
-  if (!text || !STOCK_PATTERNS.some(re => re.test(text))) return null;
+  if (!text) return null;
+  const categoryId = matchCategorySynonym(text);
+  if (!categoryId && !STOCK_PATTERNS.some(re => re.test(text))) return null;
 
   try {
-    const products = await searchProducts(cleanProductQuery(text));
-    if (!products?.length) return null;
+    // Si el mensaje matchea una categoría conocida (ej. "pre-entreno",
+    // "bcaa"), traer TODO lo publicado ahí es más confiable que buscar por
+    // texto — no depende de que el nombre del producto contenga la palabra
+    // que usó el cliente. Si no hay categoría o no trajo nada, cae a la
+    // búsqueda por texto de siempre.
+    let products = categoryId ? await searchProductsByCategory(categoryId) : [];
+    if (!products.length) products = await searchProducts(cleanProductQuery(text));
+    if (!products.length) return null;
+
     // Consulta puntual a un solo producto vs. consulta amplia por categoría/
-    // marca (ej. "qué whey protein tenés") que matchea varios — en ese caso
-    // se le pasa a Claude el precio+stock de todos, no solo el primero.
+    // marca que matchea varios — en ese caso se le pasa a Claude el
+    // precio+stock de todos, no solo el primero.
     const info = products.length === 1 ? formatStockInfo(products[0]) : formatProductsSummary(products);
     if (!info) return null;
     return `${info}\n\nEl cliente también puede confirmar precio y stock actualizado en la página del producto en entreno.com.ar.`;
