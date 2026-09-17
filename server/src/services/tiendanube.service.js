@@ -305,10 +305,17 @@ export async function getStoreInfo() {
 
 const LOW_STOCK_THRESHOLD = 3;
 
+function formatPrice(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return num.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
 /**
- * Formatea la disponibilidad de un producto a partir de sus variantes de
- * TiendaNube. `stock: null` en TiendaNube significa "sin control de stock"
- * (stock ilimitado), no "sin stock".
+ * Formatea precio + disponibilidad de un producto a partir de sus variantes
+ * de TiendaNube. `stock: null` en TiendaNube significa "sin control de
+ * stock" (stock ilimitado), no "sin stock". Si `promotional_price` es menor
+ * al precio de lista, se muestra como precio con descuento.
  * @param {object} product - resultado crudo de searchProducts()
  * @returns {string|null}
  */
@@ -321,15 +328,50 @@ export function formatStockInfo(product) {
 
   const lines = variants.map(v => {
     const label = (v.values ?? []).map(val => val?.es ?? val?.en ?? Object.values(val ?? {})[0]).filter(Boolean).join(' / ') || 'Único';
+
+    const listPrice = formatPrice(v.price);
+    const promoPrice = formatPrice(v.promotional_price);
+    const hasPromo = promoPrice && listPrice && Number(v.promotional_price) < Number(v.price);
+    const priceStr = hasPromo ? `${promoPrice} (antes ${listPrice})` : (listPrice ?? 'Consultar precio');
+
+    let availability;
     if (v.stock_management === false || v.stock === null || v.stock === undefined) {
-      return `- ${label}: Disponible`;
+      availability = 'Disponible';
+    } else if (v.stock <= 0) {
+      availability = 'Sin stock';
+    } else if (v.stock < LOW_STOCK_THRESHOLD) {
+      availability = 'Quedan pocas unidades';
+    } else {
+      availability = 'Disponible';
     }
-    if (v.stock <= 0) return `- ${label}: Sin stock`;
-    if (v.stock < LOW_STOCK_THRESHOLD) return `- ${label}: Quedan pocas unidades`;
-    return `- ${label}: Disponible`;
+
+    return `- ${label}: ${priceStr} — ${availability}`;
   }).join('\n');
 
-  return `Producto: ${name}\nDisponibilidad:\n${lines}\nEl cliente también puede confirmar el stock actualizado en la página del producto en entreno.com.ar.`;
+  return `Producto: ${name}\n${lines}`;
+}
+
+const PRODUCT_LIST_LIMIT = 8;
+
+/**
+ * Formatea precio + disponibilidad de varios productos para consultas
+ * amplias por categoría/marca (ej. "qué whey protein tenés") que matchean
+ * muchos resultados — a diferencia de formatStockInfo, pensada para cuando
+ * el cliente ya preguntó por un producto puntual.
+ * @param {Array<object>} products - resultado crudo de searchProducts()
+ * @returns {string|null}
+ */
+export function formatProductsSummary(products, limit = PRODUCT_LIST_LIMIT) {
+  if (!products?.length) return null;
+  const shown = products.slice(0, limit);
+  const blocks = shown.map(p => formatStockInfo(p)).filter(Boolean);
+  if (!blocks.length) return null;
+
+  let result = `Se encontraron ${products.length} producto(s):\n\n${blocks.join('\n\n')}`;
+  if (products.length > shown.length) {
+    result += `\n\n(Hay ${products.length - shown.length} producto(s) más que no entran acá — si el cliente busca algo puntual, pedile que lo precise, o derivalo al catálogo completo en entreno.com.ar).`;
+  }
+  return result;
 }
 
 /**

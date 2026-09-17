@@ -195,8 +195,10 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
     prompt += `\n\n--- BÚSQUEDA DE PEDIDO "#${orderRef}" ---\nSe intentó buscar este pedido en Tienda Nube AHORA MISMO y NO se encontró ningún resultado. No existe. No inventes un número, fecha, cliente o producto alternativo por más que "te suene" a algo — decile honestamente al cliente que no lo encontraste. Pedile que confirme bien el número de pedido, o como alternativa el email con el que compró.`;
   }
   if (stockInfo) {
-    prompt += `\n\n--- STOCK DEL PRODUCTO ---\n${stockInfo}`;
-    prompt += `\n\nGuía para interpretar la disponibilidad:
+    prompt += `\n\n--- PRECIO Y STOCK DEL PRODUCTO ---\n${stockInfo}`;
+    prompt += `\n\nGuía para responder con esta información:
+- El precio SÍ se comparte tal cual figura acá (incluido el precio con descuento si aparece "antes $X"). Nunca lo inventes ni lo redondees.
+- Si aparecen varios productos, elegí los relevantes a la consulta del cliente — no hace falta leerle los 8 si preguntó por uno puntual.
 - "Disponible" → hay stock.
 - "Quedan pocas unidades" → puede agotarse pronto, avisale al cliente.
 - "Sin stock" → no disponible al momento de la consulta.

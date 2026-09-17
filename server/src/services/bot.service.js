@@ -17,7 +17,7 @@ import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveAreas } from './area.service.js';
 import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
-import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, formatStockInfo } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, formatStockInfo, formatProductsSummary } from './tiendanube.service.js';
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /reclamo/i, /estafa/i, /fraude/i,
@@ -43,9 +43,16 @@ const ORDER_INTENT_NO_NUMBER_PATTERNS = [
 const STOCK_PATTERNS = [
   /\bstock\b/i,
   /\bdisponib/i,
-  /tienen\s+(?:el|la|los|las)\s+\w/i,
+  /tienen\s+\w+/i,
   /hay\s+(?:algún|alguna|algun|alguna)\b/i,
   /\bqueda\b|\bquedan\b/i,
+  // Precio — se resuelve con la misma búsqueda a TiendaNube que stock,
+  // porque formatStockInfo/formatProductsSummary ya incluyen el precio.
+  /\bprecio/i,
+  /\bcuesta\b|\bcuestan\b/i,
+  /\bsale\b|\bsalen\b/i,
+  /\bvale\b|\bvalen\b/i,
+  /cu[aá]nto\s+(?:sale|cuesta|vale|est[aá])/i,
 ];
 
 const PRODUCT_INFO_PATTERNS = [
@@ -425,7 +432,12 @@ async function resolveStockContext(text) {
   try {
     const products = await searchProducts(cleanProductQuery(text));
     if (!products?.length) return null;
-    return formatStockInfo(products[0]);
+    // Consulta puntual a un solo producto vs. consulta amplia por categoría/
+    // marca (ej. "qué whey protein tenés") que matchea varios — en ese caso
+    // se le pasa a Claude el precio+stock de todos, no solo el primero.
+    const info = products.length === 1 ? formatStockInfo(products[0]) : formatProductsSummary(products);
+    if (!info) return null;
+    return `${info}\n\nEl cliente también puede confirmar precio y stock actualizado en la página del producto en entreno.com.ar.`;
   } catch (err) {
     console.error('[bot] resolveStockContext error:', err.message);
     return null;
