@@ -522,16 +522,35 @@ export async function exportCustomersCsv() {
 // hayan escrito al bot) y los mete/actualiza en la colección de contactos,
 // con su historial de compras para poder segmentarlos.
 
+// Corre `worker` sobre `items` con hasta `limit` en simultáneo. Con miles de
+// clientes (Entreno tiene +20k pedidos en TN), procesar de a uno por vez
+// tarda minutos y supera el timeout del proxy de Railway (~5min) antes de
+// terminar — con concurrencia el mismo trabajo baja a segundos.
+async function runWithConcurrency(items, limit, worker) {
+  let idx = 0;
+  async function runNext() {
+    while (idx < items.length) {
+      const i = idx++;
+      await worker(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runNext));
+}
+
 export async function syncAllTiendaNubeCustomers() {
   const db = getDb();
-  const groups = await fetchAllCustomersWithOrders();
-  let created = 0, updated = 0, skippedNoPhone = 0;
+  // maxPages generoso: Entreno ya tiene +20k pedidos históricos y crece —
+  // 150 páginas de 200 cubre 30k pedidos sin acercarse al límite real de
+  // la tienda por ahora.
+  const groups = await fetchAllCustomersWithOrders({ maxPages: 150 });
+  let created = 0, updated = 0, skippedNoPhone = 0, done = 0;
+  const startedAt = Date.now();
 
-  for (const { tnCustomer, orders } of groups) {
+  await runWithConcurrency(groups, 25, async ({ tnCustomer, orders }) => {
     const rawPhone = tnCustomer.phone;
-    if (!rawPhone || String(rawPhone).replace(/\D/g, '').length < 6) { skippedNoPhone++; continue; }
+    if (!rawPhone || String(rawPhone).replace(/\D/g, '').length < 6) { skippedNoPhone++; return; }
     const contactId = toWaContactId(rawPhone);
-    if (!contactId) { skippedNoPhone++; continue; }
+    if (!contactId) { skippedNoPhone++; return; }
 
     const sorted = [...orders].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
     const tnOrders = mapTnOrders(sorted, 50);
@@ -570,9 +589,11 @@ export async function syncAllTiendaNubeCustomers() {
       });
       created++;
     }
-  }
+    done++;
+    if (done % 500 === 0) console.log(`[customer] Sync Tienda Nube: ${done}/${groups.length} procesados…`);
+  });
 
   const result = { scanned: groups.length, created, updated, skippedNoPhone };
-  console.log('[customer] Sync Tienda Nube:', JSON.stringify(result));
+  console.log(`[customer] Sync Tienda Nube (${((Date.now() - startedAt) / 1000).toFixed(1)}s):`, JSON.stringify(result));
   return result;
 }
