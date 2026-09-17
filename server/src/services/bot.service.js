@@ -72,10 +72,14 @@ const PRODUCT_INFO_PATTERNS = [
 const QUERY_STOPWORDS = new Set([
   'hola', 'buenas', 'buen', 'buenos', 'dia', 'día', 'dias', 'días', 'tardes', 'noches',
   'de', 'del', 'que', 'qué', 'es', 'son', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas',
-  'tiene', 'tienen', 'viene', 'vienen', 'se', 'o', 'hay', 'y', 'con', 'para', 'como',
+  'tiene', 'tienen', 'viene', 'vienen', 'se', 'o', 'hay', 'y', 'con', 'para', 'como', 'a', 'al',
+  'en', 'ya', 'está', 'esta', 'están', 'estan',
   'cuál', 'cual', 'cuáles', 'cuales', 'cuanto', 'cuánto', 'sabor', 'sabores',
   'porfavor', 'favor', 'por', 'me', 'podes', 'podés', 'puedes', 'decir', 'decime',
   'saber', 'queria', 'quería', 'quiero', 'consulta', 'pregunta', 'gustaria', 'gustaría',
+  // Muletillas de precio/stock — no forman parte del nombre del producto.
+  'precio', 'precios', 'stock', 'disponible', 'disponibles', 'disponibilidad',
+  'cuesta', 'cuestan', 'sale', 'salen', 'vale', 'valen', 'queda', 'quedan',
 ]);
 function cleanProductQuery(text) {
   const words = (text ?? '')
