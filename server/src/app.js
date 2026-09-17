@@ -17,8 +17,6 @@ import templateRoutes from './routes/template.routes.js';
 import costsRoutes from './routes/costs.routes.js';
 import { initFirebase } from './services/firebase.service.js';
 import areaRoutes from './routes/area.routes.js';
-import projectRoutes from './routes/project.routes.js';
-import ticketRoutes from './routes/ticket.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
 import redirectRoutes from './routes/redirect.routes.js';
 import tiendanubeRoutes from './routes/tiendanube.routes.js';
@@ -84,13 +82,6 @@ app.use('/api/costs',         requireAuth, requireAtLeastAtencionCliente, costsR
 // El propio router ya restringe crear/editar/borrar a requireAdmin —
 // la lectura la necesita cualquier operador para derivar conversaciones.
 app.use('/api/areas',         requireAuth, areaRoutes);
-// Lectura abierta a cualquier rol autenticado (para vincular tickets);
-// alta/baja/edición requiere al menos atencion_cliente (restringido dentro
-// del propio router, igual criterio que /api/areas).
-app.use('/api/projects',      requireAuth, projectRoutes);
-// Sin restricción de rol adicional — cualquier agente autenticado puede ver,
-// crear y comentar tickets (ver Global Constraints del plan).
-app.use('/api/tickets',       requireAuth, ticketRoutes);
 app.use('/api/campaigns',     requireAuth, requireAtLeastAtencionCliente, campaignRoutes);
 app.use('/api/tiendanube',    requireAuth, requireAtLeastAtencionCliente, tiendanubeRoutes);
 

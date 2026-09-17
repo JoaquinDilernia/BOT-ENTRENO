@@ -16,8 +16,6 @@ import Templates     from './pages/Templates.jsx';
 import Costs         from './pages/Costs.jsx';
 import Areas         from './pages/Areas.jsx';
 import Users         from './pages/Users.jsx';
-import Proyectos     from './pages/Proyectos.jsx';
-import Tickets       from './pages/Tickets.jsx';
 import Customers     from './pages/Customers.jsx';
 import Campaigns     from './pages/Campaigns.jsx';
 
@@ -57,8 +55,6 @@ function AppRoutes() {
           <Route path="costs"         element={<Costs />} />
           <Route path="areas"         element={<Areas />} />
           <Route path="users"         element={<Users />} />
-          <Route path="proyectos"     element={<Proyectos />} />
-          <Route path="tickets"       element={<Tickets />} />
         </Route>
       </Routes>
   );

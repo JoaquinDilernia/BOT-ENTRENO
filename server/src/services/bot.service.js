@@ -15,8 +15,6 @@ import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64 } from
 import { getOrCreateCustomer, buildCustomerContext, linkCustomerFromOrder } from './customer.service.js';
 import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveAreas } from './area.service.js';
-import { findProjectByPhone } from './project.service.js';
-import { createTicket } from './ticket.service.js';
 import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
 import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, formatStockInfo } from './tiendanube.service.js';
@@ -134,23 +132,6 @@ function parseCloseMarker(text) {
     return { shouldClose: true, cleanText: text.replace(/\[CERRAR\]\s*/i, '').trim() };
   }
   return { shouldClose: false, cleanText: text };
-}
-
-function parseTicketMarker(text) {
-  const match = text.match(/\[CREAR_TICKET:\s*(\{[\s\S]*\})\s*\]/i);
-  if (!match) return { shouldCreateTicket: false, ticketParams: null, cleanText: text };
-  let ticketParams = null;
-  try {
-    ticketParams = JSON.parse(match[1]);
-  } catch (err) {
-    console.error('[bot] CREAR_TICKET con JSON inválido, se descarta:', err.message, '—', match[1]);
-    ticketParams = null;
-  }
-  // Sweep de seguridad: si el parseo falló o el marcador quedó parcialmente
-  // capturado, nunca dejar que texto tipo "[CREAR_TICKET:...]" le llegue al
-  // cliente por WhatsApp.
-  const cleanText = text.replace(match[0], '').replace(/\[CREAR_TICKET[\s\S]*?\]/gi, '').trim();
-  return { shouldCreateTicket: !!ticketParams, ticketParams, cleanText };
 }
 
 function parseLabelMarkers(text) {
@@ -379,8 +360,7 @@ async function processIncomingMessageInternal(msg) {
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, areas);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
-  const { shouldCreateTicket, ticketParams, cleanText: textAfterTicket } = parseTicketMarker(textAfterClose);
-  const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterTicket);
+  const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
   const cleanText = toWhatsAppBold(textAfterLabels);
 
   await appendMessage(from, { role: 'assistant', content: cleanText });
@@ -413,45 +393,6 @@ async function processIncomingMessageInternal(msg) {
       } catch (sendErr) {
         console.error(`[bot] ERROR enviando IG a ${from}:`, sendErr.response?.data ?? sendErr.message);
       }
-    }
-  }
-
-  if (shouldCreateTicket && ticketParams) {
-    try {
-      const project = await findProjectByPhone(from).catch(() => null);
-      // Si el mensaje que disparó el ticket era una imagen, se adjunta esa.
-      // Si no, se busca la última imagen que el cliente mandó en el
-      // historial reciente (el historial cargado al principio del turno
-      // todavía no incluye el mensaje actual, así que no hay doble conteo).
-      // Solo se busca en los últimos mensajes del historial — no en toda la
-      // conversación — para no adjuntar una imagen vieja y no relacionada al
-      // ticket (p.ej. una captura de pantalla de hace meses sobre otro tema).
-      const recentHistory = history.slice(-6);
-      const lastImageMsg = [...recentHistory].reverse().find(m => m.role === 'user' && m.mediaType === 'image' && m.mediaId);
-      const imageMediaId = (type === 'image' && mediaId) ? mediaId : (lastImageMsg?.mediaId ?? null);
-
-      const ticket = await createTicket({
-        titulo: ticketParams.titulo || 'Ticket sin título',
-        descripcion: ticketParams.descripcion || '',
-        proyectoId: project?.id ?? null,
-        contactId: from,
-        prioridad: ['baja', 'media', 'alta', 'urgente'].includes(ticketParams.prioridad) ? ticketParams.prioridad : 'media',
-        imagenes: imageMediaId ? [{ mediaId: imageMediaId, mimeType: 'image/jpeg' }] : [],
-        createdBy: 'bot',
-      });
-      console.log(`[bot] Ticket ${ticket.id} creado para ${from}${project ? ` (proyecto: ${project.nombre})` : ' (sin proyecto vinculado)'}`);
-
-      const confirmMsg = `✅ Ticket #${ticket.id.slice(0, 6)} creado — en breve el equipo te contacta.`;
-      await appendMessage(from, { role: 'assistant', content: confirmMsg });
-      if (channel === 'whatsapp') await sendWhatsAppMessage(from, confirmMsg).catch(() => {});
-      else if (channel === 'instagram') await sendInstagramMessage(from, confirmMsg).catch(() => {});
-    } catch (err) {
-      console.error('[bot] Error creando ticket:', err.message);
-      const failMsg = 'Che, tuvimos un problema técnico registrando tu ticket. Ya le avisamos al equipo, en breve te contactamos para solucionarlo.';
-      await appendMessage(from, { role: 'assistant', content: failMsg }).catch(() => {});
-      await setUrgentFlag(from, true).catch(() => {});
-      if (channel === 'whatsapp') await sendWhatsAppMessage(from, failMsg).catch(() => {});
-      else if (channel === 'instagram') await sendInstagramMessage(from, failMsg).catch(() => {});
     }
   }
 
