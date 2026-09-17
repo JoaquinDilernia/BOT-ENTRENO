@@ -282,9 +282,10 @@ export async function searchProductsByCategory(categoryId) {
  */
 export async function fetchAllCustomersWithOrders({ maxPages = 40 } = {}) {
   const PER_PAGE = 200;
+  const BATCH_CONCURRENCY = 10;
   const byCustomer = new Map();
-  for (let page = 1; page <= maxPages; page++) {
-    let batch;
+
+  async function fetchPage(page) {
     try {
       const { data } = await client.get('/orders', {
         params: {
@@ -295,21 +296,37 @@ export async function fetchAllCustomersWithOrders({ maxPages = 40 } = {}) {
           page,
         },
       });
-      batch = data ?? [];
+      return data ?? [];
     } catch (err) {
+      // TN devuelve 422 al pedir una página más allá de su límite de
+      // paginación por offset (independiente del total de pedidos que
+      // tenga la tienda) — es el fin natural del recorrido, no un error.
       console.error(`[tiendanube] fetchAllCustomersWithOrders página ${page}:`, err.message);
-      break;
+      return null;
     }
-    if (batch.length === 0) break;
-    for (const order of batch) {
-      const c = order.customer;
-      if (!c?.id) continue;
-      if (!byCustomer.has(c.id)) {
-        byCustomer.set(c.id, { tnCustomer: { id: c.id, name: c.name ?? null, email: c.email ?? null, phone: c.phone ?? null }, orders: [] });
+  }
+
+  // Pagina en tandas concurrentes: cada request individual a TN puede tardar
+  // varios segundos (tienda con +20k pedidos), así que traerlas de a una
+  // hacía que un sync completo tardara minutos y superara el timeout del
+  // proxy de Railway. El rate limiter del cliente axios sigue vigente, así
+  // que esto no dispara más carga a TN de la que ya tolera.
+  outer: for (let start = 1; start <= maxPages; start += BATCH_CONCURRENCY) {
+    const pages = Array.from({ length: Math.min(BATCH_CONCURRENCY, maxPages - start + 1) }, (_, i) => start + i);
+    const results = await Promise.all(pages.map(fetchPage));
+
+    for (const batch of results) {
+      if (batch === null || batch.length === 0) break outer;
+      for (const order of batch) {
+        const c = order.customer;
+        if (!c?.id) continue;
+        if (!byCustomer.has(c.id)) {
+          byCustomer.set(c.id, { tnCustomer: { id: c.id, name: c.name ?? null, email: c.email ?? null, phone: c.phone ?? null }, orders: [] });
+        }
+        byCustomer.get(c.id).orders.push(order);
       }
-      byCustomer.get(c.id).orders.push(order);
+      if (batch.length < PER_PAGE) break outer;
     }
-    if (batch.length < PER_PAGE) break;
   }
   return [...byCustomer.values()];
 }
