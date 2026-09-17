@@ -21,6 +21,7 @@ import projectRoutes from './routes/project.routes.js';
 import ticketRoutes from './routes/ticket.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
 import redirectRoutes from './routes/redirect.routes.js';
+import tiendanubeRoutes from './routes/tiendanube.routes.js';
 import { seedAgentsIfNeeded } from './services/auth.service.js';
 import { seedAreasIfNeeded } from './services/area.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
@@ -91,6 +92,7 @@ app.use('/api/projects',      requireAuth, projectRoutes);
 // crear y comentar tickets (ver Global Constraints del plan).
 app.use('/api/tickets',       requireAuth, ticketRoutes);
 app.use('/api/campaigns',     requireAuth, requireAtLeastAtencionCliente, campaignRoutes);
+app.use('/api/tiendanube',    requireAuth, requireAtLeastAtencionCliente, tiendanubeRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

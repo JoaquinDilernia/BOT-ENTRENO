@@ -1,6 +1,8 @@
 import { getDb } from './firebase.service.js';
+import { findCustomerByPhone, getCustomerOrders } from './tiendanube.service.js';
 
 const COLLECTION = 'bot-entreno_customers';
+const TN_CACHE_HOURS = 6;
 
 export async function getOrCreateCustomer(contactId, channel, contactName = null) {
   const db = getDb();
@@ -23,6 +25,10 @@ export async function getOrCreateCustomer(contactId, channel, contactName = null
     lastContactAt: new Date(),
     agentNotes: '',
     tags: [],
+    tnCustomerId: null,
+    tnEmail: null,
+    tnOrders: [],
+    tnOrdersUpdatedAt: null,
     source: 'bot',
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -30,6 +36,89 @@ export async function getOrCreateCustomer(contactId, channel, contactName = null
 
   await docRef.set(customer);
   return { id: contactId, ...customer };
+}
+
+/**
+ * Trae y cachea el historial de compras en TiendaNube de un contacto,
+ * buscando por su teléfono de WhatsApp. Igual patrón que BOT-ALTORANCHO
+ * (ver [[project-bots]]) — cache de TN_CACHE_HOURS para no pegarle a la API
+ * de TiendaNube en cada mensaje.
+ */
+export async function enrichCustomerFromTiendaNube(contactId, forceRefresh = false) {
+  const db = getDb();
+  const docRef = db.collection(COLLECTION).doc(contactId);
+  const doc = await docRef.get();
+  if (!doc.exists) return;
+
+  const data = doc.data();
+
+  if (!forceRefresh && data.tnOrdersUpdatedAt) {
+    const updatedAt = data.tnOrdersUpdatedAt._seconds
+      ? new Date(data.tnOrdersUpdatedAt._seconds * 1000)
+      : new Date(data.tnOrdersUpdatedAt);
+    const hoursSince = (Date.now() - updatedAt.getTime()) / (1000 * 60 * 60);
+    if (hoursSince < TN_CACHE_HOURS) return;
+  }
+
+  const phone = contactId.replace(/\D/g, '');
+  const tnCustomer = await findCustomerByPhone(phone);
+
+  if (!tnCustomer) {
+    await docRef.update({ tnOrdersUpdatedAt: new Date() });
+    return;
+  }
+
+  const rawOrders = await getCustomerOrders(tnCustomer.id);
+  const tnOrders = mapTnOrders(rawOrders);
+
+  await docRef.update({
+    tnCustomerId: tnCustomer.id,
+    tnEmail: tnCustomer.email ?? null,
+    contactName: data.contactName ?? tnCustomer.name ?? null,
+    tnOrders,
+    tnOrdersUpdatedAt: new Date(),
+  });
+}
+
+/** Vincula un contacto a su cliente de TiendaNube apenas se encuentra un
+ * pedido suyo en la conversación (evita esperar al próximo ciclo de cache). */
+export async function linkCustomerFromOrder(contactId, tnCustomer) {
+  if (!tnCustomer?.id) return;
+  const db = getDb();
+  const docRef = db.collection(COLLECTION).doc(contactId);
+  const doc = await docRef.get();
+  if (!doc.exists) return;
+  const data = doc.data();
+  if (data.tnCustomerId) return;
+
+  const rawOrders = await getCustomerOrders(tnCustomer.id);
+  const tnOrders = mapTnOrders(rawOrders);
+
+  await docRef.update({
+    tnCustomerId: tnCustomer.id,
+    tnEmail: tnCustomer.email ?? null,
+    contactName: data.contactName ?? tnCustomer.name ?? null,
+    tnOrders,
+    tnOrdersUpdatedAt: new Date(),
+  });
+  console.log(`[customer] Auto-linked ${contactId} → TN customer #${tnCustomer.id}`);
+}
+
+function mapTnOrders(rawOrders) {
+  return (rawOrders ?? []).slice(0, 10).map(o => ({
+    number: o.number,
+    date: o.created_at?.split('T')[0] ?? null,
+    status: o.status,
+    paymentStatus: o.payment_status,
+    shippingStatus: o.shipping_status,
+    total: o.total,
+    products: (o.products ?? []).map(p => {
+      const name = typeof p.name === 'string' ? p.name
+        : (p.name?.es ?? p.name?.en ?? Object.values(p.name ?? {})[0] ?? 'Producto');
+      const variants = (p.variant_values ?? []).join(' / ');
+      return variants ? `${name} (${variants})` : name;
+    }),
+  }));
 }
 
 export async function getCustomerProfile(contactId) {
@@ -52,8 +141,21 @@ export function buildCustomerContext(customer) {
 
   const lines = [];
   if (customer.contactName) lines.push(`Nombre: ${customer.contactName}`);
+  if (customer.tnEmail) lines.push(`Email: ${customer.tnEmail}`);
   lines.push(`Canal: ${customer.channel}`);
   if (customer.firstContactAt) lines.push(`Primera consulta: ${formatDate(customer.firstContactAt)}`);
+
+  if (customer.tnOrders?.length) {
+    lines.push(`\nHistorial de compras en Tienda Nube (${customer.tnOrders.length} pedido/s):`);
+    for (const o of customer.tnOrders) {
+      const parts = [`#${o.number}`, o.date ?? '?', `$${o.total}`];
+      if (o.status) parts.push(`estado: ${o.status}`);
+      if (o.paymentStatus) parts.push(`pago: ${o.paymentStatus}`);
+      if (o.shippingStatus) parts.push(`envío: ${o.shippingStatus}`);
+      if (o.products?.length) parts.push(`productos: ${o.products.join(', ')}`);
+      lines.push(`  - ${parts.join(' | ')}`);
+    }
+  }
 
   if (customer.agentNotes) {
     lines.push(`\nNotas del equipo: ${customer.agentNotes}`);
@@ -91,7 +193,7 @@ function mapCustomerDoc(doc) {
     contactId: data.contactId ?? doc.id,
     channel: data.channel ?? null,
     contactName: data.contactName ?? null,
-    email: data.email ?? null,
+    email: data.email ?? data.tnEmail ?? null,
     tags: data.tags ?? [],
     agentNotes: data.agentNotes ?? '',
     source: data.source ?? 'bot',

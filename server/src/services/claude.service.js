@@ -47,6 +47,19 @@ Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando
 Usá [CERRAR] solo cuando estés seguro de que la conversación terminó.`;
 }
 
+// Extrae el texto de la respuesta recorriendo los bloques de `content` en vez
+// de asumir que el bloque [0] es siempre de tipo texto — con claude-sonnet-5,
+// un system prompt largo (como el de este bot) le hace anteponer un bloque
+// `thinking`, y asumir [0] devuelve undefined y tira el bot entero abajo sin
+// avisarle nada al cliente (ver incidente BOT-ALTORANCHO 2026-09-01, [[project-bots]]).
+function extractText(response) {
+  return (response.content ?? [])
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('')
+    .trim();
+}
+
 function buildTicketInstructions() {
   return `
 IMPORTANTE — TICKETS DE SOPORTE: Cuando un cliente describe un problema técnico, un bug, o algo que no funciona bien, conversá primero para juntar un título breve y una descripción clara del problema (y si es evidente qué tan urgente es, mejor — si no, no importa). Antes o junto con el marcador, avisale EXPLÍCITAMENTE en tu texto que le estás generando un ticket de soporte — nunca lo hagas en silencio. Recién ahí, en una línea separada (invisible para el cliente), agregá:
@@ -129,13 +142,16 @@ export async function generateConversationSummary(messages) {
     }],
   });
   logUsage(response.usage, 'summary');
-  return response.content[0].text.trim();
+  return extractText(response);
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', customerContext = null, availableLabels = [], botConfig = {}, imageData = null, areas = [] } = context;
+  const {
+    knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null,
+    customerContext = null, availableLabels = [], botConfig = {}, imageData = null, areas = [],
+  } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, customerContext, availableLabels, areas);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, areas);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   const response = await callAnthropicAPI({
@@ -146,18 +162,18 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   });
 
   logUsage(response.usage, 'bot_reply');
-  return response.content[0].text;
+  return extractText(response);
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, customerContext, availableLabels = [], areas = []) {
-  const botName = botConfig.botName || 'Asistente';
-  const businessName = botConfig.businessName || '[NOMBRE DEL NEGOCIO]';
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], areas = []) {
+  const botName = botConfig.botName || 'Entreno';
+  const businessName = botConfig.businessName || 'Entreno';
   const personality = botConfig.botPersonality ||
-    `Respondés de forma amigable, natural y cercana — como lo haría una persona real del equipo.
-Usás un tono cálido y profesional. Nunca robótico ni genérico.
-Escribís en español rioplatense (vos, etc.) con claridad.
+    `Sos el asistente virtual de Entreno (entreno.com.ar), tienda online de suplementos deportivos, nutrición y indumentaria fitness.
+Tenés una onda cercana y motivadora, como alguien del equipo que también entrena. Vas al grano.
+Usás español rioplatense (vos, etc.) con calidez y profesionalismo. Nunca sonás robótico ni genérico.
 Si no sabés algo, lo decís honestamente y ofrecés derivar a la persona correcta.
-Nunca inventás información sobre servicios, precios, plazos, procesos o links — solo usás los datos que te den. Si algo no está en la información que tenés, lo decís honestamente en vez de inventar o suponer.`;
+Nunca inventás información sobre productos, precios, stock, pedidos, envíos o marcas — solo usás los datos que te den. Si algo no está en la información que tenés, lo decís honestamente en vez de inventar o suponer.`;
 
   let prompt = `Sos el asistente virtual de ${businessName}. Tu nombre es ${botName}.\n${personality}`;
   prompt += buildEscalationInstructions(areas);
@@ -167,6 +183,38 @@ Nunca inventás información sobre servicios, precios, plazos, procesos o links 
     prompt += `\n\nIMPORTANTE — USO DE ESTA INFORMACIÓN: Es TU ÚNICA fuente de verdad sobre servicios, precios, procesos y políticas. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente. Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y ofrecé derivar a alguien del equipo.`;
   }
   if (customerContext) prompt += `\n\n--- PERFIL DEL CONTACTO ---\n${customerContext}`;
+
+  if (orderInfo || orderRef) {
+    prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, no podés afirmar que encontraste un pedido, aunque el número se parezca a algo mencionado antes.`;
+  }
+  if (orderInfo) {
+    prompt += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
+    prompt += `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad.`;
+    prompt += `\n\nGuía para interpretar el pedido:
+- pago "pagado" + envio "enviado" → en camino, compartí el tracking si hay.
+- pago "pagado" + envio "en preparación" o "pendiente de preparación" → se está preparando, próximamente se envía.
+- pago "pagado" + envio "entregado" → ya fue entregado.
+- pago "pendiente de pago" → falta confirmar el pago.
+- estado "cancelado" → pedido cancelado, derivar si preguntan por reembolso.
+- tipoEntrega "retiro" → el cliente retira el pedido, no aplica tracking de courier.
+- Si hay tracking, compartilo directamente sin que lo pida.
+- Si hay nota en el pedido, tenerla en cuenta para dar contexto.`;
+  } else if (orderRef) {
+    prompt += `\n\n--- BÚSQUEDA DE PEDIDO "#${orderRef}" ---\nSe intentó buscar este pedido en Tienda Nube AHORA MISMO y NO se encontró ningún resultado. No existe. No inventes un número, fecha, cliente o producto alternativo por más que "te suene" a algo — decile honestamente al cliente que no lo encontraste. Pedile que confirme bien el número de pedido, o como alternativa el email con el que compró.`;
+  }
+  if (stockInfo) {
+    prompt += `\n\n--- STOCK DEL PRODUCTO ---\n${stockInfo}`;
+    prompt += `\n\nGuía para interpretar la disponibilidad:
+- "Disponible" → hay stock.
+- "Quedan pocas unidades" → puede agotarse pronto, avisale al cliente.
+- "Sin stock" → no disponible al momento de la consulta.
+- Nunca menciones cantidades numéricas — solo usás las etiquetas anteriores.
+- Siempre agregá el disclaimer: "El stock puede variar por las ventas de la tienda."`;
+  }
+  if (productInfo) {
+    prompt += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;
+    prompt += `\n\nUsá esta ficha para responder preguntas sobre el producto (marca, presentación, sabor, uso, etc). Si la descripción no cubre lo que te preguntan, decilo honestamente en vez de inventar.`;
+  }
   if (availableLabels.length) {
     prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).
 Etiquetas disponibles: ${availableLabels.join(', ')}.

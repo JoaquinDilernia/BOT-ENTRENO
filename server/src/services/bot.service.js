@@ -12,18 +12,74 @@ import {
   addLabelToConversation,
 } from './conversation.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64 } from './meta.service.js';
-import { getOrCreateCustomer, buildCustomerContext } from './customer.service.js';
+import { getOrCreateCustomer, buildCustomerContext, linkCustomerFromOrder } from './customer.service.js';
 import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveAreas } from './area.service.js';
 import { findProjectByPhone } from './project.service.js';
 import { createTicket } from './ticket.service.js';
 import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
+import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, formatStockInfo } from './tiendanube.service.js';
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /reclamo/i, /estafa/i, /fraude/i,
   /muy enojad/i, /indignado/i, /hablar con una persona/i, /quiero hablar/i,
 ];
+
+// Captura números de pedido de Tienda Nube. A diferencia de BOT-ALTORANCHO
+// (que tiene Odoo con prefijos S/TN), Entreno es pura tienda online: todo
+// pedido es un número puro. El número puede venir con o sin "#" y en
+// cualquier parte del mensaje (ver [[project-bots]] por el patrón original).
+const ORDER_REF_TOKEN = /#?(\d{3,})\b/;
+const ORDER_BARE_NUMBER = /^#?(\d{3,})$/;
+const ORDER_KEYWORD = /\b(pedido|orden|compra|n[uú]mero)\b/i;
+const ORDER_INTENT_NO_NUMBER_PATTERNS = [
+  /tracking/i,
+  /donde\s*(está|esta)\s*(mi|el)\s*pedido/i,
+  /estado\s*(de|del)\s*(mi|el)?\s*pedido/i,
+  /cuándo\s*(llega|llega)/i,
+  /mi\s+compra\b/i,
+  /compr[eé]\s+(?:algo|un|una|el|la)\b/i,
+];
+
+const STOCK_PATTERNS = [
+  /\bstock\b/i,
+  /\bdisponib/i,
+  /tienen\s+(?:el|la|los|las)\s+\w/i,
+  /hay\s+(?:algún|alguna|algun|alguna)\b/i,
+  /\bqueda\b|\bquedan\b/i,
+];
+
+const PRODUCT_INFO_PATTERNS = [
+  /\bsabor(es)?\b/i,
+  /\bpresentaci[oó]n\b/i,
+  /\bcomposici[oó]n\b/i,
+  /\bingrediente/i,
+  /\bc[oó]mo\s+se\s+toma\b/i,
+  /\bpara\s+qu[eé]\s+sirve\b/i,
+  /\bficha t[eé]cnica\b/i,
+  /\bmarca\b/i,
+];
+
+// La búsqueda `q=` de TiendaNube matchea contra el nombre del producto, no
+// hace fuzzy/semántico — se filtran preguntas/muletillas comunes para
+// quedarnos con lo que probablemente sea el nombre del producto.
+const QUERY_STOPWORDS = new Set([
+  'hola', 'buenas', 'buen', 'buenos', 'dia', 'día', 'dias', 'días', 'tardes', 'noches',
+  'de', 'del', 'que', 'qué', 'es', 'son', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas',
+  'tiene', 'tienen', 'viene', 'vienen', 'se', 'o', 'hay', 'y', 'con', 'para', 'como',
+  'cuál', 'cual', 'cuáles', 'cuales', 'cuanto', 'cuánto', 'sabor', 'sabores',
+  'porfavor', 'favor', 'por', 'me', 'podes', 'podés', 'puedes', 'decir', 'decime',
+  'saber', 'queria', 'quería', 'quiero', 'consulta', 'pregunta', 'gustaria', 'gustaría',
+]);
+function cleanProductQuery(text) {
+  const words = (text ?? '')
+    .replace(/[¿?¡!.,]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w && !QUERY_STOPWORDS.has(w.toLowerCase()));
+  const cleaned = words.join(' ').trim();
+  return cleaned || text;
+}
 
 // Returns true if current Argentina time is within business hours
 export function isWithinBusinessHours(botConfig = {}) {
@@ -277,13 +333,33 @@ async function processIncomingMessageInternal(msg) {
     setUrgentFlag(from, true).catch(() => {});
   }
 
+  const [orderContext, stockInfo, productInfo] = await Promise.all([
+    resolveOrderContext(text ?? '', customer, conversation),
+    resolveStockContext(text ?? ''),
+    resolveProductInfoContext(text ?? ''),
+  ]);
   const customerContext = buildCustomerContext(customer);
+
+  if (orderContext.tnCustomer) {
+    linkCustomerFromOrder(from, orderContext.tnCustomer).catch(err =>
+      console.error('[bot] linkCustomerFromOrder error:', err.message)
+    );
+  }
+  if (orderContext.orderRef) {
+    getDb().collection('bot-entreno_conversations').doc(from)
+      .update({ lastOrderRef: orderContext.orderRef })
+      .catch(() => {});
+  }
 
   console.log(`[bot] Llamando a Claude para ${from}`);
   let botReply;
   try {
     botReply = await generateBotResponse(text ?? '', history, {
       knowledgeBase,
+      orderInfo: orderContext.orderInfo,
+      orderRef: orderContext.orderRef,
+      stockInfo,
+      productInfo,
       customerContext,
       availableLabels: availableLabels.map(l => l.name),
       botConfig,
@@ -400,4 +476,122 @@ async function processIncomingMessageInternal(msg) {
     await updateConversationStatus(from, 'resolved');
     console.log(`[bot] Conversación ${from} resuelta por el bot`);
   }
+}
+
+async function resolveStockContext(text) {
+  if (!text || !STOCK_PATTERNS.some(re => re.test(text))) return null;
+
+  try {
+    const products = await searchProducts(cleanProductQuery(text));
+    if (!products?.length) return null;
+    return formatStockInfo(products[0]);
+  } catch (err) {
+    console.error('[bot] resolveStockContext error:', err.message);
+    return null;
+  }
+}
+
+// Quita el <link> de Google Fonts y las etiquetas HTML que TiendaNube guarda
+// en la descripción del producto, dejando texto plano legible para el prompt.
+function stripProductDescriptionHtml(html) {
+  return html
+    .replace(/<link[^>]*>/gi, '')
+    .replace(/<\/?(p|div|li|h[1-6])[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
+async function resolveProductInfoContext(text) {
+  if (!text || !PRODUCT_INFO_PATTERNS.some(re => re.test(text))) return null;
+
+  try {
+    const products = await searchProducts(cleanProductQuery(text));
+    if (!products?.length) return null;
+    const p = products[0];
+
+    const name = typeof p.name === 'string' ? p.name : (p.name?.es ?? p.name?.en ?? Object.values(p.name ?? {})[0] ?? 'Producto');
+    const rawDesc = p.description?.es ?? p.description?.en ?? Object.values(p.description ?? {})[0] ?? '';
+    const cleanDesc = rawDesc ? stripProductDescriptionHtml(rawDesc) : '';
+    if (!cleanDesc) return null;
+
+    return `Producto: ${name}\n${cleanDesc}`;
+  } catch (err) {
+    console.error('[bot] resolveProductInfoContext error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Resuelve si el mensaje hace referencia a un pedido y lo busca en Tienda
+ * Nube. Versión simplificada de la de BOT-ALTORANCHO (ver [[project-bots]]):
+ * Entreno no tiene Odoo ni locales físicos, así que todo pedido se busca
+ * ÚNICA Y EXCLUSIVAMENTE en TiendaNube, por número o por email.
+ */
+async function resolveOrderContext(text, customer, conversation = {}) {
+  const trimmed = text.trim();
+
+  if (trimmed.includes('@')) {
+    const tnOrders = await findOrdersByEmail(trimmed);
+    if (tnOrders.length) {
+      const summary = tnOrders.map(o => formatOrderStatus(o)).filter(Boolean);
+      return { orderInfo: summary, tnCustomer: tnOrders[0]?.customer ?? null };
+    }
+    return { orderInfo: null, tnCustomer: null };
+  }
+
+  // Mensaje es directamente el número (con o sin "#"), ej: bot preguntó
+  // "¿número de pedido?" y el cliente contesta solo "20610" o "#20610".
+  const bareMatch = trimmed.match(ORDER_BARE_NUMBER);
+
+  // Palabra clave de pedido en cualquier parte del mensaje + número en
+  // cualquier parte del mensaje (no hace falta que estén pegados).
+  const hasKeyword = ORDER_KEYWORD.test(trimmed);
+  const tokenMatch = trimmed.match(ORDER_REF_TOKEN);
+
+  const orderRef = bareMatch?.[1] ?? (hasKeyword && tokenMatch ? tokenMatch[1] : null);
+
+  if (orderRef) {
+    const result = await searchOrderByRef(orderRef, customer?.tnEmail);
+    return { ...result, orderRef };
+  }
+
+  // Hay intención de consultar un pedido/compra pero sin número — priorizar
+  // la última orden mencionada en esta conversación, luego la del perfil.
+  const hasIntentWithoutNumber = hasKeyword || ORDER_INTENT_NO_NUMBER_PATTERNS.some(re => re.test(trimmed));
+  if (hasIntentWithoutNumber) {
+    const fallbackRef = conversation.lastOrderRef ?? String(customer?.tnOrders?.[0]?.number ?? '');
+    if (fallbackRef) {
+      console.log(`[bot] Sin número en mensaje, usando orden del contexto: #${fallbackRef}`);
+      const result = await searchOrderByRef(fallbackRef, customer?.tnEmail);
+      return { ...result, orderRef: fallbackRef };
+    }
+    return { orderInfo: null, tnCustomer: null };
+  }
+
+  return { orderInfo: null, tnCustomer: null };
+}
+
+async function searchOrderByRef(orderRef, email = null) {
+  const tnOrder = await findOrder(orderRef);
+
+  if (tnOrder) {
+    console.log(`[bot] Pedido #${orderRef} encontrado en TiendaNube (TN id: ${tnOrder.id})`);
+    return { orderInfo: formatOrderStatus(tnOrder), tnCustomer: tnOrder.customer ?? null };
+  }
+
+  // Último recurso: si ya sabemos el email del cliente en esta conversación,
+  // reintentar por email — cubre pedidos 'open' que q= no indexa y que la
+  // paginación por número puede fallar en encontrar bajo tráfico alto.
+  if (email) {
+    console.log(`[bot] Pedido #${orderRef} no encontrado, reintentando por email conocido (${email})`);
+    const emailOrders = await findOrdersByEmail(email);
+    const match = emailOrders.find(o => String(o.number) === orderRef);
+    if (match) {
+      console.log(`[bot] Pedido #${orderRef} encontrado vía email conocido`);
+      return { orderInfo: formatOrderStatus(match), tnCustomer: match.customer ?? null };
+    }
+  }
+
+  return { orderInfo: null, tnCustomer: null };
 }
