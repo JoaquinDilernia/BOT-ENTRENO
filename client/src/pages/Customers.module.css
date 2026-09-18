@@ -47,6 +47,11 @@
   min-height: 0; /* deja que el overflow-y realmente scrollee dentro del panel */
   overflow-y: auto;
 }
+/* Sin esto, .table (que tiene overflow:hidden por el border-radius) se
+   ACHICA con flex-shrink para entrar en .body y recorta las filas de abajo
+   sin dejar scrollear. Los hijos tienen que mantener su alto natural y
+   hacer scrollear al contenedor. */
+.body > * { flex-shrink: 0; }
 
 .errorBanner {
   padding: var(--space-3) var(--space-4);

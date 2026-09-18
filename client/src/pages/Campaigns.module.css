@@ -24,6 +24,9 @@
   min-height: 0; /* deja que el overflow-y realmente scrollee dentro del panel */
   overflow-y: auto;
 }
+/* Sin esto, un hijo con overflow:hidden (ej. .table por el border-radius) se
+   achica con flex-shrink y recorta el contenido sin dejar scrollear. */
+.body > * { flex-shrink: 0; }
 
 .form {
   background: var(--color-surface);
