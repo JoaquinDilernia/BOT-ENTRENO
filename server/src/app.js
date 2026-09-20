@@ -20,6 +20,8 @@ import areaRoutes from './routes/area.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
 import redirectRoutes from './routes/redirect.routes.js';
 import tiendanubeRoutes from './routes/tiendanube.routes.js';
+import mercadolibreRoutes from './routes/mercadolibre.routes.js';
+import mercadolibreWebhookRoutes from './routes/mercadolibre-webhook.routes.js';
 import { seedAgentsIfNeeded } from './services/auth.service.js';
 import { seedAreasIfNeeded } from './services/area.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
@@ -57,6 +59,9 @@ app.use('/api/auth', authRoutes);
 // Redirect de links cortos de difusiones — lo clickea el destinatario final
 // desde WhatsApp, no un agente logueado, así que va sin requireAuth.
 app.use('/r', redirectRoutes);
+// Notificaciones de Mercado Libre (preguntas, pedidos) — las manda ML, no un
+// agente logueado. Integración en desarrollo, ver mercadolibre.service.js.
+app.use('/api/mercadolibre-webhook', mercadolibreWebhookRoutes);
 
 // Routes (protected)
 // Operador can access: conversations (filtered), labels
@@ -84,6 +89,7 @@ app.use('/api/costs',         requireAuth, requireAtLeastAtencionCliente, costsR
 app.use('/api/areas',         requireAuth, areaRoutes);
 app.use('/api/campaigns',     requireAuth, requireAtLeastAtencionCliente, campaignRoutes);
 app.use('/api/tiendanube',    requireAuth, requireAtLeastAtencionCliente, tiendanubeRoutes);
+app.use('/api/mercadolibre',  requireAuth, requireAtLeastAtencionCliente, mercadolibreRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
