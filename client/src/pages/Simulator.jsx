@@ -27,6 +27,7 @@ export default function Simulator() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  const [clearing, setClearing] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -72,6 +73,29 @@ export default function Simulator() {
       setError(err.message);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function clearChat() {
+    if (clearing) return;
+    if (!confirm(`¿Borrar la conversación y el perfil simulados de "${contactName || contactId}"? Esto no se puede deshacer.`)) return;
+
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await authFetch(`${API}/api/test/message`, {
+        method: 'DELETE',
+        body: { contactId, channel },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Error desconocido');
+
+      setMessages([]);
+      setCustomer(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -173,6 +197,15 @@ export default function Simulator() {
               </span>
             </div>
             <span className={styles.chatId}>{contactId}</span>
+            <button
+              type="button"
+              className={styles.clearBtn}
+              onClick={clearChat}
+              disabled={clearing || sending}
+              title="Borrar conversación y perfil simulados, empezar de cero"
+            >
+              {clearing ? 'Borrando…' : '🗑 Limpiar chat'}
+            </button>
           </div>
 
           <div className={styles.messages}>

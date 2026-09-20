@@ -94,6 +94,11 @@ export async function getConversationHistory(contactId) {
   return doc.exists ? doc.data().messages ?? [] : [];
 }
 
+export async function deleteConversation(contactId) {
+  const db = getDb();
+  await db.collection(COLLECTION).doc(contactId).delete();
+}
+
 export async function updateConversationStatus(contactId, status) {
   const db = getDb();
   const update = { status, updatedAt: new Date() };
