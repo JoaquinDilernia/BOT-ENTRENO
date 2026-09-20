@@ -73,7 +73,7 @@ export default function Layout() {
 
       <aside className={`${styles.sidebar} ${menuOpen ? styles.sidebarOpen : ''} ${collapsed ? styles.sidebarCollapsed : ''}`}>
         <div className={styles.brand}>
-          <div className={styles.brandLogo}>T</div>
+          <div className={styles.brandLogo}>E</div>
           <div className={styles.brandText}>
             <span className={styles.brandName}>Entreno</span>
             <span className={styles.brandSub}>Bot Dashboard</span>
