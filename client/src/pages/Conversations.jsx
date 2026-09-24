@@ -23,7 +23,7 @@ const CHANNEL_CONFIG = {
 const FILTERS = [
   { value: 'bot',           label: 'Bot' },
   { value: 'mine',          label: 'Mis casos' },
-  { value: 'teams',         label: 'Equipos',  minRole: 'atencion_cliente' },
+  { value: 'urgent',        label: 'Urgentes' },
   { value: 'archived',      label: 'Archivados' },
 ];
 
@@ -389,10 +389,8 @@ export default function Conversations() {
   const [newConvError, setNewConvError] = useState('');
   const [summary, setSummary] = useState(null);
   const [summaryGenerating, setSummaryGenerating] = useState(false);
-  const [areas, setAreas] = useState([]);
   const [agentsList, setAgentsList] = useState([]);
   const [nameMap, setNameMap] = useState({});
-  const [teamsAreaFilter, setTeamsAreaFilter] = useState('');
   const [apiWindowError, setApiWindowError] = useState(false);
   const [templateSendOpen, setTemplateSendOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -428,7 +426,6 @@ export default function Conversations() {
       authFetch(BASE_URL + '/api/auth/users').then(r => r.ok ? r.json() : []),
     ]).then(([areasData, agents]) => {
       const loadedAreas = areasData.areas ?? [];
-      setAreas(loadedAreas);
       setAgentsList(agents.filter(a => a.role !== 'admin'));
       const map = {};
       for (const a of loadedAreas) map[a.id] = a.name;
@@ -974,10 +971,6 @@ export default function Conversations() {
           if (isConvArchived) return false;
           if (!convHuman) return false;
           if (getSlaWaitMs(c) < 60 * 60 * 1000) return false;
-        } else if (filter === 'teams') {
-          if (isConvArchived) return false;
-          if (!convHuman) return false;
-          if (teamsAreaFilter && c.assignedTo !== teamsAreaFilter) return false;
         }
 
         if (labelFilter && !(c.labels ?? []).includes(labelFilter)) return false;
@@ -1013,25 +1006,13 @@ export default function Conversations() {
             }).map(f => (
               <button
                 key={f.value}
-                onClick={() => { setFilter(f.value); if (f.value !== 'teams') setTeamsAreaFilter(''); }}
+                onClick={() => setFilter(f.value)}
                 className={`${styles.filterChip} ${filter === f.value ? styles.filterChipActive : ''}`}
               >
                 {f.label}
               </button>
             ))}
           </div>
-          {filter === 'teams' && areas.length > 0 && (
-            <select
-              className={styles.labelSelect}
-              value={teamsAreaFilter}
-              onChange={e => setTeamsAreaFilter(e.target.value)}
-            >
-              <option value="">Todas las áreas</option>
-              {areas.map(a => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          )}
           {allLabels.length > 0 && (
             <select
               className={styles.labelSelect}
