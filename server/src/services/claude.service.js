@@ -176,9 +176,7 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
   }
   if (customerContext) prompt += `\n\n--- PERFIL DEL CONTACTO ---\n${customerContext}`;
 
-  if (orderInfo || orderRef) {
-    prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, no podés afirmar que encontraste un pedido, aunque el número se parezca a algo mencionado antes.`;
-  }
+  prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, es porque no hay datos reales, y ahí no podés afirmar ni sugerir que encontraste un pedido, aunque el número se parezca a algo mencionado antes. Si el cliente menciona un pedido/compra y no tenés información del pedido en este prompt, pedile el número de pedido (puede mandarlo con o sin "#", solo el número alcanza) para buscarlo. Si no lo tiene a mano o ya lo buscaste y no apareció, como último recurso pedile el email con el que compró.`;
   if (orderInfo) {
     prompt += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
     prompt += `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad.`;
