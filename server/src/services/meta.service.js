@@ -136,16 +136,21 @@ export async function sendWhatsAppTemplate(to, templateName, language = 'es_AR',
   return data.messages?.[0]?.id ?? null;
 }
 
-export async function uploadMetaMedia(buffer, mimeType) {
+export async function uploadMetaMedia(buffer, mimeType, fileName = 'upload') {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) return null;
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('type', mimeType);
-  form.append('file', new Blob([buffer], { type: mimeType }), 'upload');
+  form.append('file', new Blob([buffer], { type: mimeType }), fileName);
   const { data } = await axios.post(
     `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/media`,
     form,
-    { headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` } }
+    {
+      headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
+      // Documentos de hasta 100 MB — sin esto axios corta en ~10 MB.
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    }
   );
   return data.id;
 }
@@ -164,10 +169,14 @@ export function resolveMetaMediaType(mimeType) {
 // contrato que sendWhatsAppMessage — antes no devolvía nada, así que un
 // archivo/audio enviado nunca podía recibir tildes de entregado/leído ni
 // ser citado más adelante).
-export async function sendWhatsAppMedia(to, mediaId, mimeType, fileName = null, replyToWaMsgId = null) {
+// `options.type` fuerza el tipo de mensaje (ej. una imagen de más de 5 MB que
+// se manda como 'document'); `options.caption` es el texto que acompaña a una
+// imagen/video/documento (los audios no admiten caption en WhatsApp).
+export async function sendWhatsAppMedia(to, mediaId, mimeType, fileName = null, replyToWaMsgId = null, options = {}) {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) return null;
-  const type = resolveMetaMediaType(mimeType);
+  const type = options.type ?? resolveMetaMediaType(mimeType);
   const mediaObject = type === 'document' && fileName ? { id: mediaId, filename: fileName } : { id: mediaId };
+  if (options.caption && type !== 'audio') mediaObject.caption = options.caption;
   const { data } = await axios.post(
     `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
     {
@@ -190,7 +199,10 @@ async function fetchMetaMediaInfo(mediaId) {
   return info; // { url, mime_type, ... }
 }
 
-export async function getMetaMediaStream(mediaId, res) {
+// `fileName` (opcional): nombre original del archivo — sin él, al abrir un
+// .docx/.xlsx en una pestaña nueva el navegador lo bajaba con el mediaId de
+// Meta como nombre y sin extensión.
+export async function getMetaMediaStream(mediaId, res, fileName = null) {
   if (!process.env.META_ACCESS_TOKEN) throw new Error('No META_ACCESS_TOKEN');
   const info = await fetchMetaMediaInfo(mediaId);
   const response = await axios.get(info.url, {
@@ -199,7 +211,22 @@ export async function getMetaMediaStream(mediaId, res) {
   });
   res.setHeader('Content-Type', info.mime_type || 'application/octet-stream');
   res.setHeader('Cache-Control', 'private, max-age=3600');
+  if (info.file_size) res.setHeader('Content-Length', String(info.file_size));
+  if (fileName) {
+    const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '');
+    res.setHeader('Content-Disposition', `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+  }
   response.data.pipe(res);
+}
+
+// Descarga un adjunto que vino por URL (Instagram manda links de CDN en vez de
+// mediaId) — para poder reenviarlo por WhatsApp.
+export async function downloadUrlMedia(url) {
+  const response = await axios.get(url, { responseType: 'arraybuffer', maxContentLength: Infinity });
+  return {
+    buffer: Buffer.from(response.data),
+    mimeType: String(response.headers['content-type'] ?? 'application/octet-stream').split(';')[0],
+  };
 }
 
 export async function downloadMetaMedia(mediaId) {
@@ -277,8 +304,9 @@ export function parseWhatsAppMessage(webhookBody) {
     }
 
     const MEDIA_TYPES = ['image', 'audio', 'video', 'document', 'sticker'];
-    const mediaId = MEDIA_TYPES.includes(msg.type) ? msg[msg.type]?.id : null;
-    const caption = MEDIA_TYPES.includes(msg.type) ? (msg[msg.type]?.caption ?? '') : '';
+    const media = MEDIA_TYPES.includes(msg.type) ? msg[msg.type] : null;
+    const mediaId = media?.id ?? null;
+    const caption = media?.caption ?? '';
 
     return {
       channel: 'whatsapp',
@@ -287,6 +315,10 @@ export function parseWhatsAppMessage(webhookBody) {
       text: msg.text?.body ?? caption,
       type: msg.type,
       mediaId,
+      // Sólo los documentos traen nombre de archivo; sin él el panel mostraba
+      // "Abrir archivo" genérico y bajaba todo como "imagen-123.pdf".
+      fileName: media?.filename ?? null,
+      mimeType: media?.mime_type ?? null,
       timestamp: msg.timestamp,
       contactName,
       replyToWaMsgId,
@@ -324,15 +356,19 @@ export function parseInstagramMessage(webhookBody) {
     if (!messaging?.message) return null;
 
     const attachments = messaging.message.attachments ?? [];
-    const imageAttachment = attachments.find(a => a.type === 'image');
+    // Instagram manda los adjuntos como URL de CDN (no hay mediaId como en
+    // WhatsApp). 'file' es el equivalente a 'document'.
+    const IG_TYPE_MAP = { image: 'image', audio: 'audio', video: 'video', file: 'document', ig_reel: 'video', reel: 'video' };
+    const attachment = attachments.find(a => a.type === 'image') ?? attachments.find(a => IG_TYPE_MAP[a.type]) ?? attachments[0];
+    const mappedType = attachment ? (IG_TYPE_MAP[attachment.type] ?? attachment.type) : 'text';
 
     return {
       channel: 'instagram',
       from: messaging.sender.id,
       messageId: messaging.message.mid,
       text: messaging.message.text ?? '',
-      type: imageAttachment ? 'image' : (attachments.length ? attachments[0].type : 'text'),
-      mediaUrl: imageAttachment?.payload?.url ?? null,
+      type: mappedType,
+      mediaUrl: IG_TYPE_MAP[attachment?.type] ? (attachment.payload?.url ?? null) : null,
       timestamp: messaging.timestamp,
       contactName: 'Cliente',
     };

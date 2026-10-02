@@ -26,7 +26,9 @@ import {
   uploadMetaMedia,
   getMetaMediaStream,
   downloadMetaMedia,
+  downloadUrlMedia,
 } from '../services/meta.service.js';
+import { prepareWhatsAppMedia, MediaRejectedError, MAX_UPLOAD_BYTES } from '../services/media.service.js';
 import { transcribeAudio } from '../services/transcription.service.js';
 import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
@@ -34,7 +36,24 @@ import { generateConversationSummary } from '../services/claude.service.js';
 import { toWaContactId } from '../services/phone.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } });
+// 100 MB = tope de WhatsApp para documentos. Los topes por tipo (5 MB imagen,
+// 16 MB video/audio) los aplica prepareWhatsAppMedia con un mensaje claro.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } });
+
+// multer guarda originalname en latin1 — un "presupuesto_año.pdf" llegaba como
+// "presupuesto_aÃ±o.pdf". Se re-decodifica como UTF-8.
+function decodeOriginalName(name) {
+  try { return Buffer.from(name ?? '', 'latin1').toString('utf8'); } catch { return name; }
+}
+
+function uploadSingle(field) {
+  const mw = upload.single(field);
+  return (req, res, next) => mw(req, res, err => {
+    if (err?.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'El archivo supera los 100 MB que acepta WhatsApp.' });
+    if (err) return res.status(400).json({ error: err.message });
+    next();
+  });
+}
 
 // Se mantiene el nombre por compatibilidad con los imports existentes
 // (customer.routes.js). La lógica vive en phone.js para que el webhook
@@ -47,7 +66,7 @@ export function normalizeArgPhone(raw) {
 // ---- Media proxy (must be before /:contactId routes) ----
 router.get('/media/:mediaId', async (req, res) => {
   try {
-    await getMetaMediaStream(req.params.mediaId, res);
+    await getMetaMediaStream(req.params.mediaId, res, req.query.name ? String(req.query.name).slice(0, 200) : null);
   } catch (err) {
     if (!res.headersSent) res.status(502).json({ error: err.message });
   }
@@ -380,7 +399,41 @@ router.post('/:contactId/send-template', async (req, res) => {
   }
 });
 
-router.post('/:contactId/media', upload.single('file'), async (req, res) => {
+const MEDIA_LABELS = { audio: '[Audio enviado]', video: '[Video enviado]', image: '[Imagen enviada]' };
+
+function mediaLabel(mediaType, fileName, caption) {
+  const base = mediaType === 'document' ? `[Archivo: ${fileName}]` : (MEDIA_LABELS[mediaType] ?? '[Archivo enviado]');
+  return caption ? `${base} ${caption}` : base;
+}
+
+function describeSendError(sendErr) {
+  const detail = sendErr.response?.data ?? sendErr.message;
+  return typeof detail === 'object' ? JSON.stringify(detail) : detail;
+}
+
+/**
+ * Sube un archivo a Meta y lo manda a un contacto de WhatsApp. Devuelve los
+ * campos de mensaje a guardar en el panel. Tira MediaRejectedError si el
+ * archivo no se puede mandar (formato/tamaño) — en ese caso no se guarda nada.
+ */
+async function sendWhatsAppFile(contactId, { buffer, mimetype, originalname, isVoiceNote = false, caption = '', replyToWaMsgId = null }) {
+  const prepared = await prepareWhatsAppMedia({ buffer, mimetype, originalname, isVoiceNote });
+  const metaMediaId = await uploadMetaMedia(prepared.buffer, prepared.mimeType, prepared.fileName);
+  const waMsgId = metaMediaId
+    ? await sendWhatsAppMedia(contactId, metaMediaId, prepared.mimeType, prepared.fileName, replyToWaMsgId, { type: prepared.waType, caption })
+    : null;
+  return {
+    // Una imagen pesada viaja como documento pero en el panel se sigue viendo como foto.
+    mediaType: prepared.waType === 'document' && prepared.mimeType.startsWith('image/') ? 'image' : prepared.waType,
+    mediaId: metaMediaId ?? null,
+    fileName: prepared.fileName,
+    mimeType: prepared.mimeType,
+    fileSize: prepared.buffer.length,
+    waMsgId,
+  };
+}
+
+router.post('/:contactId/media', uploadSingle('file'), async (req, res) => {
   try {
     const { contactId } = req.params;
     if (!req.file) return res.status(400).json({ error: 'No se recibió archivo' });
@@ -390,52 +443,59 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
     const { channel, status } = doc.data();
 
-    // Mismo criterio que en /reply: mandar un archivo a una conversación
-    // archivada la reabre, en vez de dejarla invisible en Archivados.
-    if (status === 'resolved' || status === 'bot_archived') {
-      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+    // Antes un archivo a Instagram se guardaba como "enviado" sin mandarse
+    // nunca — la API de IG sólo acepta adjuntos por URL pública.
+    if (channel !== 'whatsapp') {
+      return res.status(400).json({ error: 'Por ahora los archivos sólo se pueden mandar por WhatsApp. En Instagram mandá el texto o un link.' });
     }
 
-    const { buffer, mimetype, originalname } = req.file;
-    const mediaType = mimetype.startsWith('audio/') ? 'audio'
-      : mimetype.startsWith('video/') ? 'video'
-      : mimetype.startsWith('image/') ? 'image'
-      : 'document';
+    const originalname = decodeOriginalName(req.file.originalname);
+    const caption = String(req.body.caption ?? '').trim().slice(0, 1000);
+    const isVoiceNote = req.body.voiceNote === '1';
     let replyTo = null;
     try { replyTo = sanitizeReplyTo(JSON.parse(req.body.replyTo ?? 'null')); } catch { /* ignora JSON inválido */ }
 
     const msgId = crypto.randomUUID();
     let sendError = null;
     let windowExpired = false;
-    let metaMediaId = null;
-    let waMsgId = null;
+    let sent = null;
     try {
-      if (channel === 'whatsapp') {
-        metaMediaId = await uploadMetaMedia(buffer, mimetype);
-        if (metaMediaId) waMsgId = await sendWhatsAppMedia(contactId, metaMediaId, mimetype, originalname, replyTo?.waMsgId ?? null);
-      }
+      sent = await sendWhatsAppFile(contactId, {
+        buffer: req.file.buffer, mimetype: req.file.mimetype, originalname, isVoiceNote, caption,
+        replyToWaMsgId: replyTo?.waMsgId ?? null,
+      });
     } catch (sendErr) {
-      windowExpired = channel === 'whatsapp' && isWindowExpiredError(sendErr);
-      const detail = sendErr.response?.data ?? sendErr.message;
-      console.error('[media] Error enviando media:', JSON.stringify(detail));
-      sendError = typeof detail === 'object' ? JSON.stringify(detail) : detail;
+      if (sendErr instanceof MediaRejectedError) return res.status(400).json({ error: sendErr.message });
+      windowExpired = isWindowExpiredError(sendErr);
+      sendError = describeSendError(sendErr);
+      console.error('[media] Error enviando media:', sendError);
     }
 
-    const label = mediaType === 'audio' ? '[Audio enviado]'
-      : mediaType === 'video' ? '[Video enviado]'
-      : mediaType === 'document' ? `[Archivo: ${originalname}]`
-      : '[Imagen enviada]';
+    // Mismo criterio que en /reply: mandar un archivo a una conversación
+    // archivada la reabre, en vez de dejarla invisible en Archivados.
+    if (status === 'resolved' || status === 'bot_archived') {
+      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+    }
+
+    const fallbackType = req.file.mimetype.startsWith('audio/') ? 'audio'
+      : req.file.mimetype.startsWith('video/') ? 'video'
+      : req.file.mimetype.startsWith('image/') ? 'image'
+      : 'document';
+    const mediaType = sent?.mediaType ?? fallbackType;
+    const fileName = sent?.fileName ?? originalname;
 
     await appendMessage(contactId, {
       role: 'admin',
-      content: label,
+      content: mediaLabel(mediaType, fileName, caption),
       mediaType,
-      mediaId: metaMediaId ?? null,
-      fileName: originalname,
+      mediaId: sent?.mediaId ?? null,
+      fileName,
+      ...(sent?.mimeType && { mimeType: sent.mimeType }),
+      ...(sent?.fileSize && { fileSize: sent.fileSize }),
       msgId,
       msgStatus: sendError ? 'error' : 'sent',
       sentBy: req.agent.email,
-      ...(waMsgId && { waMsgId }),
+      ...(sent?.waMsgId && { waMsgId: sent.waMsgId }),
       ...(replyTo && { replyTo: { role: replyTo.role, preview: replyTo.preview } }),
     });
 
@@ -448,6 +508,118 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
       });
     }
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Reenviar mensajes (como "Reenviar" de WhatsApp) ----
+// body: { messages: [{ content, mediaType, mediaId, mediaUrl, fileName, mimeType }], targets: [contactId] }
+// Se reenvía el contenido que manda el panel (el agente ya puede escribir
+// cualquier texto con /reply, así que no hay nada que validar contra el
+// origen). Los archivos se bajan de Meta y se vuelven a subir: los mediaId de
+// mensajes ENTRANTES no se pueden reusar para enviar.
+const FORWARD_MAX_MESSAGES = 30;
+const FORWARD_MAX_TARGETS = 10;
+const WINDOW_MS = 24 * 60 * 60 * 1000;
+const OUT_OF_WINDOW_MSG = 'Fuera de la ventana de 24 hs — hay que mandarle una plantilla primero';
+
+// "[Imagen] hola" / "[Archivo: x.pdf] mirá esto" → "hola" / "mirá esto"
+function captionFromContent(content) {
+  const m = /^\[[^\]]*\]\s*([\s\S]*)$/.exec(content ?? '');
+  return m ? m[1].trim() : (content ?? '').trim();
+}
+
+function tsMs(ts) {
+  if (!ts) return 0;
+  if (ts._seconds) return ts._seconds * 1000;
+  if (typeof ts.toDate === 'function') return ts.toDate().getTime();
+  const d = new Date(ts);
+  return isNaN(d) ? 0 : d.getTime();
+}
+
+router.post('/forward', async (req, res) => {
+  try {
+    const messages = Array.isArray(req.body.messages) ? req.body.messages.slice(0, FORWARD_MAX_MESSAGES) : [];
+    const targets = [...new Set(Array.isArray(req.body.targets) ? req.body.targets.filter(t => typeof t === 'string') : [])]
+      .slice(0, FORWARD_MAX_TARGETS);
+    if (!messages.length || !targets.length) return res.status(400).json({ error: 'Elegí al menos un mensaje y un destinatario' });
+
+    // Bajar cada archivo una sola vez aunque vaya a varios destinatarios.
+    const fileCache = new Map();
+    function getFile(m) {
+      const key = m.mediaId ?? m.mediaUrl;
+      if (!fileCache.has(key)) {
+        fileCache.set(key, (async () => {
+          const { buffer, mimeType } = m.mediaId ? await downloadMetaMedia(m.mediaId) : await downloadUrlMedia(m.mediaUrl);
+          const mimetype = m.mimeType ?? mimeType;
+          const ext = mimetype.split('/')[1]?.split(';')[0] ?? 'bin';
+          return { buffer, mimetype, originalname: m.fileName ?? `${m.mediaType ?? 'archivo'}.${ext}` };
+        })());
+      }
+      return fileCache.get(key);
+    }
+
+    const db = getDb();
+    const results = [];
+    for (const contactId of targets) {
+      const doc = await db.collection('bot-entreno_conversations').doc(contactId).get();
+      if (!doc.exists) { results.push({ contactId, ok: false, error: 'Conversación no encontrada' }); continue; }
+      const { channel, status, lastClientMessageAt, contactName } = doc.data();
+      const name = contactName || contactId;
+
+      if (channel === 'whatsapp' && (!lastClientMessageAt || Date.now() - tsMs(lastClientMessageAt) > WINDOW_MS)) {
+        results.push({ contactId, name, ok: false, error: OUT_OF_WINDOW_MSG });
+        continue;
+      }
+
+      let sentCount = 0;
+      let firstError = null;
+      for (const m of messages) {
+        const hasMedia = !!(m.mediaId || m.mediaUrl) && !!m.mediaType;
+        const text = hasMedia ? captionFromContent(m.content) : String(m.content ?? '').trim();
+        if (!hasMedia && !text) continue;
+        const msgId = crypto.randomUUID();
+        try {
+          if (hasMedia) {
+            if (channel !== 'whatsapp') throw new MediaRejectedError('En Instagram sólo se puede reenviar texto');
+            const isAudio = m.mediaType === 'audio';
+            const file = await getFile(m);
+            const sent = await sendWhatsAppFile(contactId, { ...file, isVoiceNote: isAudio, caption: isAudio ? '' : text });
+            await appendMessage(contactId, {
+              role: 'admin', content: mediaLabel(sent.mediaType, sent.fileName, isAudio ? '' : text),
+              mediaType: sent.mediaType, mediaId: sent.mediaId, fileName: sent.fileName, mimeType: sent.mimeType, fileSize: sent.fileSize,
+              msgId, msgStatus: 'sent', sentBy: req.agent.email, forwarded: true,
+              ...(sent.waMsgId && { waMsgId: sent.waMsgId }),
+            });
+          } else {
+            const waMsgId = channel === 'whatsapp'
+              ? await sendWhatsAppMessage(contactId, text)
+              : await sendInstagramMessage(contactId, text);
+            await appendMessage(contactId, {
+              role: 'admin', content: text, msgId, msgStatus: 'sent', sentBy: req.agent.email, forwarded: true,
+              ...(channel === 'whatsapp' && waMsgId && { waMsgId }),
+            });
+          }
+          sentCount++;
+        } catch (err) {
+          const msg = err instanceof MediaRejectedError
+            ? err.message
+            : (channel === 'whatsapp' && isWindowExpiredError(err))
+              ? OUT_OF_WINDOW_MSG
+              : describeSendError(err);
+          console.error(`[forward] Error reenviando a ${contactId}:`, msg);
+          firstError ??= msg;
+        }
+      }
+
+      if (sentCount > 0 && (status === 'resolved' || status === 'bot_archived')) {
+        await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+      }
+      results.push({ contactId, name, ok: !firstError, sent: sentCount, ...(firstError && { error: firstError }) });
+    }
+
+    res.json({ results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

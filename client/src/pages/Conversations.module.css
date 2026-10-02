@@ -1980,3 +1980,244 @@
     z-index: 25;
   }
 }
+
+/* ==================== ARCHIVOS, BUSCADOR Y REENVÍO ==================== */
+.msgSticker {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  display: block;
+}
+
+.msgDocumentName {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msgDocumentInfo {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+.msgDocumentOpen { min-width: 0; }
+
+.msgForwardedTag {
+  display: block;
+  font-size: 10px;
+  font-style: italic;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+
+/* ---- Buscador dentro del chat ---- */
+.chatSearchToggle {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.chatSearchToggle:hover,
+.chatSearchToggleOn { background: var(--color-surface-alt); border-color: var(--color-primary-light); }
+
+.chatSearchBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.chatSearchBar .searchInput { flex: 1; min-width: 0; }
+.chatSearchCount {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  min-width: 70px;
+  text-align: right;
+}
+.chatSearchNav {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.chatSearchNav:hover:not(:disabled) { background: var(--color-surface-alt); }
+.chatSearchNav:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.searchMark {
+  background: #fde68a;
+  color: #1c1a18;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.searchMarkCurrent {
+  background: #f59e0b;
+  color: #1c1a18;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.msgBubbleMatch { box-shadow: 0 0 0 2px #f59e0b; }
+
+/* ---- Selección de mensajes para reenviar ---- */
+.msgSelectable { cursor: pointer; border-radius: var(--radius-md); }
+.msgSelectable:hover .msgBubble { filter: brightness(0.97); }
+.msgSelected .msgBubble { box-shadow: 0 0 0 2px var(--color-status-bot); }
+
+.msgCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: 50%;
+  font-size: 10px;
+  line-height: 1;
+  color: #fff;
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+.msgCheckOn { background: var(--color-status-bot); border-color: var(--color-status-bot); }
+
+.selectionBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.selectionCancel {
+  border: none;
+  background: none;
+  font-size: 16px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.selectionCount { flex: 1; font-size: var(--font-size-sm); color: var(--color-text); font-weight: 600; }
+
+/* ---- Modal "Reenviar a…" ---- */
+.forwardModal { max-width: 460px; }
+.forwardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6) 0;
+}
+.forwardPicked { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.forwardPickedChip {
+  border: 1px solid var(--color-status-bot);
+  background: var(--color-status-bot-bg);
+  color: var(--color-status-bot);
+  border-radius: 999px;
+  padding: 2px var(--space-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.forwardList {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.forwardItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+.forwardItem:last-child { border-bottom: none; }
+.forwardItem:hover:not(:disabled) { background: var(--color-surface-alt); }
+.forwardItem:disabled { opacity: 0.5; cursor: not-allowed; }
+.forwardItemPicked { background: var(--color-status-bot-bg); }
+.forwardItemName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forwardItemNote { font-size: 10px; color: var(--color-text-muted); white-space: nowrap; }
+.forwardEmpty { padding: var(--space-4); text-align: center; color: var(--color-text-faint); font-size: var(--font-size-sm); }
+.forwardResults { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.forwardResults li { display: flex; flex-direction: column; gap: 2px; font-size: var(--font-size-sm); }
+.forwardResultOk { color: var(--color-success); }
+.forwardResultError { color: var(--color-error); }
+.forwardResultMsg { font-size: 11px; color: var(--color-text-muted); }
+
+/* ---- Adjunto pendiente de enviar ---- */
+.pendingFileRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  flex-wrap: wrap;
+}
+.pendingFileThumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+.pendingFileIcon { font-size: 28px; }
+.pendingFileInfo { display: flex; flex-direction: column; min-width: 0; max-width: 220px; }
+.pendingFileName {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pendingFileSize { font-size: 11px; color: var(--color-text-muted); }
+.pendingFileCaption {
+  flex: 1;
+  min-width: 160px;
+  height: 34px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  outline: none;
+}
+.pendingFileCaption:focus { border-color: var(--color-primary-light); }
+
+/* ---- Arrastrar y soltar archivos ---- */
+.messages { position: relative; min-height: 0; }
+.messagesDragOver { outline: 2px dashed var(--color-status-bot); outline-offset: -8px; }
+.dropHint {
+  position: sticky;
+  bottom: 0;
+  align-self: center;
+  padding: var(--space-2) var(--space-4);
+  border-radius: 999px;
+  background: var(--color-status-bot);
+  color: #fff;
+  font-size: var(--font-size-sm);
+  pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  .chatSearchBar { padding: var(--space-2) var(--space-3); }
+  .chatSearchCount { min-width: 0; }
+  .pendingFileRow { padding: var(--space-2) var(--space-3); }
+  .msgQuoteBtn { opacity: 1; }
+}

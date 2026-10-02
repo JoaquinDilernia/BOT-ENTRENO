@@ -255,6 +255,14 @@ function resolveReplyTo(history, replyToWaMsgId) {
 
 async function processIncomingMessageInternal(msg) {
   const { channel, from, text, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
+  // Datos del adjunto que se guardan junto al mensaje para que el panel pueda
+  // mostrarlo (nombre del archivo, tipo, y la URL de CDN si vino de Instagram).
+  const mediaFields = {
+    mediaId: mediaId ?? null,
+    ...(mediaUrl && { mediaUrl }),
+    ...(msg.fileName && { fileName: msg.fileName }),
+    ...(msg.mimeType && { mimeType: msg.mimeType }),
+  };
 
   let conversation, history, knowledgeBase, customer, availableLabels, configDoc, areas, customerTags;
   try {
@@ -299,14 +307,15 @@ async function processIncomingMessageInternal(msg) {
         image:    text?.trim() ? `[Imagen] ${text}` : '[Imagen recibida]',
         audio:    '[Audio recibido]',
         video:    '[Video recibido]',
-        document: '[Archivo recibido]',
+        document: msg.fileName ? `[Archivo: ${msg.fileName}]` : '[Archivo recibido]',
         sticker:  '[Sticker]',
       };
+      const caption = type !== 'image' && text?.trim() ? ` ${text.trim()}` : '';
       await appendMessage(from, {
         role: 'user',
-        content: contentMap[type],
+        content: contentMap[type] + caption,
         mediaType: type,
-        mediaId: mediaId ?? null,
+        ...mediaFields,
         contactName,
         messageId,
         ...(replyTo && { replyTo }),
@@ -322,7 +331,7 @@ async function processIncomingMessageInternal(msg) {
   if (type === 'audio') {
     const prevAudios = history.filter(m => m.role === 'user' && m.mediaType === 'audio').length;
     const audioUserMsg = '[Audio recibido]';
-    await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+    await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', ...mediaFields, contactName, messageId, ...(replyTo && { replyTo }) });
 
     let reply;
     if (prevAudios >= 1) {
@@ -337,15 +346,19 @@ async function processIncomingMessageInternal(msg) {
     return;
   }
 
-  if (type === 'video' || type === 'sticker') {
-    if (!text?.trim()) return;
+  // Videos/stickers sin texto: el bot no tiene nada que contestar, pero se
+  // guardan igual — antes se descartaban y el agente nunca los veía.
+  if ((type === 'video' || type === 'sticker') && !text?.trim()) {
+    await appendMessage(from, { role: 'user', content: type === 'video' ? '[Video recibido]' : '[Sticker]', mediaType: type, ...mediaFields, contactName, messageId, ...(replyTo && { replyTo }) });
+    return;
   }
 
   if (type === 'document') {
     const reply = 'Recibí un archivo, pero no puedo procesarlo directamente. ¿Podés contarme por escrito en qué te ayudo?';
     // mediaId se guardaba acá antes — sin él, el archivo (ej: un PDF) quedaba
     // imposible de ver o descargar después desde el panel.
-    await appendMessage(from, { role: 'user', content: '[Archivo recibido]', mediaType: 'document', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+    const docLabel = msg.fileName ? `[Archivo: ${msg.fileName}]` : '[Archivo recibido]';
+    await appendMessage(from, { role: 'user', content: text?.trim() ? `${docLabel} ${text.trim()}` : docLabel, mediaType: 'document', ...mediaFields, contactName, messageId, ...(replyTo && { replyTo }) });
     await appendMessage(from, { role: 'assistant', content: reply });
     if (channel === 'whatsapp') await sendWhatsAppMessage(from, reply);
     else if (channel === 'instagram') await sendInstagramMessage(from, reply);
@@ -365,10 +378,16 @@ async function processIncomingMessageInternal(msg) {
       } catch { /* continue without image */ }
     }
     const userContent = text?.trim() ? `[Imagen] ${text}` : '[Imagen recibida]';
-    await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+    await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', ...mediaFields, contactName, messageId, ...(replyTo && { replyTo }) });
   } else {
     if (!text?.trim()) return;
-    await appendMessage(from, { role: 'user', content: text, contactName, messageId, ...(replyTo && { replyTo }) });
+    const isMediaWithCaption = type === 'video' || type === 'sticker';
+    await appendMessage(from, {
+      role: 'user',
+      content: isMediaWithCaption ? `[Video] ${text}` : text,
+      ...(isMediaWithCaption && { mediaType: type, ...mediaFields }),
+      contactName, messageId, ...(replyTo && { replyTo }),
+    });
   }
 
   // Detect urgency keywords and flag (as urgent flag, not status change)

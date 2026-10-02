@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch, BASE_URL } from '../lib/api';
 import { useNotifications } from '../hooks/useNotifications.js';
@@ -138,15 +138,16 @@ function MsgStatusIcon({ msgStatus }) {
   return null;
 }
 
-async function downloadMedia(url, suggestedExt = 'jpg') {
+async function downloadMedia(url, fileName = null, suggestedExt = 'jpg') {
   try {
     const res = await fetch(url);
+    if (!res.ok) throw new Error('download failed');
     const blob = await res.blob();
     const ext = blob.type?.split('/')[1]?.split('+')[0] || suggestedExt;
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = `imagen-${Date.now()}.${ext}`;
+    a.download = fileName || `imagen-${Date.now()}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -156,6 +157,85 @@ async function downloadMedia(url, suggestedExt = 'jpg') {
     // pestaña abierta con clic derecho → Guardar imagen como.
     window.open(url, '_blank');
   }
+}
+
+const DOC_ICONS = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', csv: '📗', ppt: '📙', pptx: '📙', txt: '📄', zip: '🗜️', rar: '🗜️' };
+
+function fileExt(name) {
+  const m = /\.([a-z0-9]+)$/i.exec(name ?? '');
+  return m ? m[1].toLowerCase() : '';
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace('.0', '')} MB`;
+}
+
+// "[Imagen] hola" → "hola"; "[Audio recibido]" → "". Cuando el adjunto se ve
+// en la burbuja, la etiqueta entre corchetes sobra.
+function mediaCaption(content) {
+  const m = /^\[[^\]]*\]\s*([\s\S]*)$/.exec(content ?? '');
+  return m ? m[1] : (content ?? '');
+}
+
+// Minúsculas y sin tildes, carácter por carácter, para poder mapear cada
+// posición del texto normalizado a la del original al resaltar.
+function normalizeChar(c) {
+  return c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+function normalizeForSearch(text) {
+  return Array.from(text ?? '', normalizeChar).join('');
+}
+
+function highlightText(text, query, current) {
+  const q = normalizeForSearch(query.trim());
+  if (!q || !text) return text;
+  let norm = '';
+  const map = [];
+  Array.from(text).forEach((c, i) => {
+    const n = normalizeChar(c);
+    for (let k = 0; k < n.length; k++) map.push(i);
+    norm += n;
+  });
+  const chars = Array.from(text);
+  const parts = [];
+  let last = 0;
+  let pos = norm.indexOf(q);
+  while (pos !== -1) {
+    const start = map[pos];
+    const end = map[pos + q.length - 1] + 1;
+    if (start > last) parts.push(chars.slice(last, start).join(''));
+    parts.push(<mark key={start} className={current ? styles.searchMarkCurrent : styles.searchMark}>{chars.slice(start, end).join('')}</mark>);
+    last = end;
+    pos = norm.indexOf(q, pos + q.length);
+  }
+  if (last < chars.length) parts.push(chars.slice(last).join(''));
+  return parts;
+}
+
+function messageSearchText(msg) {
+  return [msg.content, msg.fileName, msg.transcript].filter(Boolean).join(' ');
+}
+
+// Clave estable de un mensaje (el array se recorta a 200, así que el índice
+// puede correrse si entra un mensaje nuevo mientras hay una selección).
+function msgKey(msg, i) {
+  if (msg.msgId) return msg.msgId;
+  if (msg.waMsgId) return msg.waMsgId;
+  const ts = msg.timestamp;
+  if (ts?._seconds) return `t${ts._seconds}_${ts._nanoseconds ?? 0}_${msg.role}`;
+  return `i${i}`;
+}
+
+function isForwardable(msg) {
+  return !!(msg.mediaId || msg.mediaUrl) || !!mediaCaption(msg.content).trim();
+}
+
+function isWaWindowClosed(conv) {
+  if (conv.channel !== 'whatsapp') return false;
+  const d = tsToDate(conv.lastClientMessageAt);
+  return !d || Date.now() - d.getTime() > 24 * 60 * 60 * 1000;
 }
 
 const REPLY_ROLE_LABELS = { user: 'Cliente', admin: 'Agente', assistant: 'Bot' };
@@ -169,16 +249,24 @@ function buildReplyPreview(content) {
   return text.length > REPLY_PREVIEW_MAX ? `${text.slice(0, REPLY_PREVIEW_MAX)}…` : text;
 }
 
-function MessageBubble({ msg, onRetry, onQuote, contactId, nameMap = {} }) {
+function MessageBubble({
+  msg, msgIndex, onRetry, onQuote, onForward, contactId, nameMap = {},
+  searchQuery = '', isCurrentMatch = false, rootRef,
+  selectMode = false, isSelected = false, onToggleSelect,
+}) {
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
   // Mensajes viejos no tienen `sentBy` (se agregó después) — quedan mostrando
   // "Agente" genérico en vez de romper o mostrar un nombre incorrecto.
   const senderLabel = isUser ? 'Cliente' : isAdmin ? (nameMap[msg.sentBy] ?? 'Agente') : 'Bot';
   const token = localStorage.getItem('bot_token');
+  // WhatsApp → proxy del backend por mediaId; Instagram → URL directa del CDN.
   const mediaProxyUrl = msg.mediaId
-    ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?token=${encodeURIComponent(token ?? '')}`
-    : null;
+    ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?token=${encodeURIComponent(token ?? '')}${msg.fileName ? `&name=${encodeURIComponent(msg.fileName)}` : ''}`
+    : (msg.mediaUrl ?? null);
+  const hasVisibleMedia = !!mediaProxyUrl && ['image', 'audio', 'video', 'document', 'sticker'].includes(msg.mediaType);
+  const shownText = hasVisibleMedia ? mediaCaption(msg.content) : msg.content;
+  const forwardable = isForwardable(msg);
   const isError = isAdmin && msg.msgStatus === 'error';
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [transcript, setTranscript] = useState(msg.transcript ?? null);
@@ -200,9 +288,22 @@ function MessageBubble({ msg, onRetry, onQuote, contactId, nameMap = {} }) {
     }
   }
 
+  const rowClass = [
+    styles.msg,
+    isUser ? styles.msgUser : isAdmin ? styles.msgAdmin : styles.msgBot,
+    selectMode && forwardable ? styles.msgSelectable : '',
+    isSelected ? styles.msgSelected : '',
+  ].join(' ');
+
   return (
-    <div className={`${styles.msg} ${isUser ? styles.msgUser : isAdmin ? styles.msgAdmin : styles.msgBot}`}>
-      <div className={`${styles.msgBubble} ${isError ? styles.msgBubbleError : ''}`}>
+    <div
+      ref={rootRef}
+      className={rowClass}
+      data-msg-index={msgIndex}
+      onClick={selectMode && forwardable ? onToggleSelect : undefined}
+    >
+      <div className={`${styles.msgBubble} ${isError ? styles.msgBubbleError : ''} ${isCurrentMatch ? styles.msgBubbleMatch : ''}`}>
+        {msg.forwarded && <span className={styles.msgForwardedTag}>↪ Reenviado</span>}
         {msg.replyTo && (
           <div className={styles.msgReplyQuote}>
             <span className={styles.msgReplyQuoteFrom}>{REPLY_ROLE_LABELS[msg.replyTo.role] ?? ''}</span>
@@ -224,7 +325,7 @@ function MessageBubble({ msg, onRetry, onQuote, contactId, nameMap = {} }) {
                 <div className={styles.lightboxContent} onClick={e => e.stopPropagation()}>
                   <img src={mediaProxyUrl} className={styles.lightboxImg} alt="Imagen ampliada" />
                   <div className={styles.lightboxActions}>
-                    <button type="button" className={styles.lightboxBtn} onClick={() => downloadMedia(mediaProxyUrl)}>
+                    <button type="button" className={styles.lightboxBtn} onClick={() => downloadMedia(mediaProxyUrl, msg.fileName)}>
                       ⬇ Descargar
                     </button>
                     <button type="button" className={styles.lightboxBtn} onClick={() => setLightboxOpen(false)}>
@@ -240,8 +341,8 @@ function MessageBubble({ msg, onRetry, onQuote, contactId, nameMap = {} }) {
           <div className={styles.msgAudioWrap}>
             <audio controls src={mediaProxyUrl} className={styles.msgAudio} />
             {transcript ? (
-              <p className={styles.msgTranscript}>📝 {transcript}</p>
-            ) : (
+              <p className={styles.msgTranscript}>📝 {highlightText(transcript, searchQuery, isCurrentMatch)}</p>
+            ) : !msg.mediaId ? null : (
               <button type="button" className={styles.transcribeBtn} onClick={handleTranscribe} disabled={transcribing}>
                 {transcribing ? 'Transcribiendo...' : '📝 Transcribir'}
               </button>
@@ -250,27 +351,52 @@ function MessageBubble({ msg, onRetry, onQuote, contactId, nameMap = {} }) {
           </div>
         )}
         {msg.mediaType === 'video' && mediaProxyUrl && (
-          <video controls src={mediaProxyUrl} className={styles.msgVideo} />
+          <video controls preload="metadata" src={mediaProxyUrl} className={styles.msgVideo} />
+        )}
+        {msg.mediaType === 'sticker' && mediaProxyUrl && (
+          <img src={mediaProxyUrl} className={styles.msgSticker} alt="Sticker" loading="lazy" />
         )}
         {msg.mediaType === 'document' && mediaProxyUrl && (
           <div className={styles.msgDocument}>
-            <span className={styles.msgDocumentIcon}>📄</span>
-            <a href={mediaProxyUrl} target="_blank" rel="noopener noreferrer" className={styles.msgDocumentOpen}>
-              Abrir archivo
+            <span className={styles.msgDocumentIcon}>{DOC_ICONS[fileExt(msg.fileName)] ?? '📄'}</span>
+            <a
+              href={mediaProxyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.msgDocumentOpen}
+              title={msg.fileName ? `Abrir ${msg.fileName}` : 'Abrir archivo'}
+              onClick={e => { if (selectMode) e.preventDefault(); }}
+            >
+              <span className={styles.msgDocumentName}>
+                {msg.fileName ? highlightText(msg.fileName, searchQuery, isCurrentMatch) : 'Abrir archivo'}
+              </span>
+              {(msg.fileSize || fileExt(msg.fileName)) && (
+                <span className={styles.msgDocumentInfo}>
+                  {[formatFileSize(msg.fileSize), fileExt(msg.fileName).toUpperCase()].filter(Boolean).join(' · ')}
+                </span>
+              )}
             </a>
-            <button type="button" className={styles.msgDocumentDownload} onClick={() => downloadMedia(mediaProxyUrl, 'pdf')} title="Descargar">
+            <button
+              type="button"
+              className={styles.msgDocumentDownload}
+              onClick={e => { e.stopPropagation(); downloadMedia(mediaProxyUrl, msg.fileName, 'pdf'); }}
+              title="Descargar"
+            >
               ⬇
             </button>
           </div>
         )}
-        {msg.content && <span>{msg.content}</span>}
+        {shownText && <span>{highlightText(shownText, searchQuery, isCurrentMatch)}</span>}
         {onRetry && (
           <button type="button" className={styles.retryBtn} onClick={() => onRetry(msg.content)}>
-            ↩ Reenviar
+            ↻ Reintentar
           </button>
         )}
       </div>
       <span className={styles.msgMeta}>
+        {selectMode && forwardable && (
+          <span className={`${styles.msgCheck} ${isSelected ? styles.msgCheckOn : ''}`}>{isSelected ? '✓' : ''}</span>
+        )}
         {senderLabel}
         {msg.timestamp ? ` · ${formatDateTime(msg.timestamp)}` : ''}
         {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} />}
@@ -284,7 +410,157 @@ function MessageBubble({ msg, onRetry, onQuote, contactId, nameMap = {} }) {
             ↩
           </button>
         )}
+        {onForward && forwardable && !selectMode && (
+          <button
+            type="button"
+            className={styles.msgQuoteBtn}
+            onClick={onForward}
+            title="Reenviar este mensaje"
+          >
+            ↪
+          </button>
+        )}
       </span>
+    </div>
+  );
+}
+
+// ---- Modal "Reenviar a…" ----
+function ForwardModal({ items, conversations, onClose, onDone }) {
+  const [query, setQuery] = useState('');
+  const [remote, setRemote] = useState(null);
+  const [picked, setPicked] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState('');
+  const MAX_TARGETS = 10;
+  const hasMedia = items.some(m => m.mediaId || m.mediaUrl);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) { setRemote(null); return; }
+    const handle = setTimeout(async () => {
+      try {
+        const r = await authFetch(BASE_URL + `/api/conversations/search?q=${encodeURIComponent(term)}`);
+        const data = await r.json();
+        setRemote(data.conversations ?? []);
+      } catch { setRemote([]); }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  const q = normalizeForSearch(query.trim());
+  const list = q.length >= 2 && remote
+    ? remote
+    : conversations.filter(c => !q || normalizeForSearch(`${c.contactName ?? ''} ${c.contactId}`).includes(q));
+
+  function toggle(conv) {
+    setPicked(prev => prev.some(p => p.id === conv.id)
+      ? prev.filter(p => p.id !== conv.id)
+      : prev.length >= MAX_TARGETS ? prev : [...prev, conv]);
+  }
+
+  async function send() {
+    if (!picked.length || sending) return;
+    setSending(true);
+    setError('');
+    try {
+      const r = await authFetch(BASE_URL + '/api/conversations/forward', {
+        method: 'POST',
+        body: {
+          messages: items.map(m => ({
+            content: m.content ?? '', mediaType: m.mediaType ?? null, mediaId: m.mediaId ?? null,
+            mediaUrl: m.mediaUrl ?? null, fileName: m.fileName ?? null, mimeType: m.mimeType ?? null,
+          })),
+          targets: picked.map(c => c.id),
+        },
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Error reenviando');
+      setResults(data.results ?? []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className={styles.newConvOverlay} onClick={sending ? undefined : onClose}>
+      <div className={`${styles.newConvModal} ${styles.forwardModal}`} onClick={e => e.stopPropagation()}>
+        <div className={styles.newConvModalHeader}>
+          <span className={styles.newConvModalTitle}>
+            Reenviar {items.length} mensaje{items.length > 1 ? 's' : ''}
+          </span>
+          <button className={styles.newConvCloseBtn} onClick={onClose} disabled={sending}>×</button>
+        </div>
+
+        {results ? (
+          <div className={styles.forwardBody}>
+            <ul className={styles.forwardResults}>
+              {results.map(r => (
+                <li key={r.contactId} className={r.ok ? styles.forwardResultOk : styles.forwardResultError}>
+                  <span>{r.ok ? '✓' : '✗'} {r.name ?? r.contactId}</span>
+                  {r.error && <span className={styles.forwardResultMsg}>{r.error}</span>}
+                </li>
+              ))}
+            </ul>
+            <div className={styles.newConvFooter}>
+              <button className={styles.newConvSubmitBtn} onClick={() => onDone(results)}>Listo</button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.forwardBody}>
+            <input
+              className={styles.searchInput}
+              placeholder="Buscar chat por nombre o teléfono…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              autoFocus
+            />
+            {picked.length > 0 && (
+              <div className={styles.forwardPicked}>
+                {picked.map(c => (
+                  <button key={c.id} type="button" className={styles.forwardPickedChip} onClick={() => toggle(c)} title="Quitar">
+                    {c.contactName || c.contactId} ×
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className={styles.forwardList}>
+              {list.length === 0 && <p className={styles.forwardEmpty}>Sin resultados</p>}
+              {list.map(c => {
+                const closed = isWaWindowClosed(c);
+                const igBlocked = hasMedia && c.channel === 'instagram';
+                const isPicked = picked.some(p => p.id === c.id);
+                const disabled = closed || (!isPicked && picked.length >= MAX_TARGETS);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`${styles.forwardItem} ${isPicked ? styles.forwardItemPicked : ''}`}
+                    onClick={() => toggle(c)}
+                    disabled={disabled}
+                  >
+                    <span className={`${styles.msgCheck} ${isPicked ? styles.msgCheckOn : ''}`}>{isPicked ? '✓' : ''}</span>
+                    <span className={styles.forwardItemName}>{c.contactName || c.contactId}</span>
+                    <ChannelBadge channel={c.channel} />
+                    {closed && <span className={styles.forwardItemNote}>Fuera de ventana 24 hs</span>}
+                    {!closed && igBlocked && <span className={styles.forwardItemNote}>Sólo texto</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {error && <p className={styles.newConvError}>⚠️ {error}</p>}
+            <div className={styles.newConvFooter}>
+              <button className={styles.newConvCancelBtn} onClick={onClose} disabled={sending}>Cancelar</button>
+              <button className={styles.newConvSubmitBtn} onClick={send} disabled={!picked.length || sending}>
+                {sending ? 'Reenviando…' : `Reenviar${picked.length ? ` a ${picked.length}` : ''}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -397,8 +673,18 @@ export default function Conversations() {
   const [templateParams, setTemplateParams] = useState([]);
   const [sendingTemplate, setSendingTemplate] = useState(false);
   const [templateSendError, setTemplateSendError] = useState('');
-  const messagesEndRef = useRef(null);
+  const [pendingFile, setPendingFile] = useState(null); // { file, previewUrl, caption } — adjunto elegido, pendiente de enviar
+  const [dragOver, setDragOver] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearch, setChatSearch] = useState('');
+  const [chatSearchIdx, setChatSearchIdx] = useState(0);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [forwardItems, setForwardItems] = useState(null); // mensajes a reenviar → abre el modal
   const messagesContainerRef = useRef(null);
+  const messageRefs = useRef({});
+  const initialScrollPendingRef = useRef(false);
   const atBottomRef = useRef(true);
   const prevMsgCountRef = useRef(0);
   const pollConvRef = useRef(null);
@@ -487,6 +773,18 @@ export default function Conversations() {
     selectedIdRef.current = selected.id;
     atBottomRef.current = true;
     prevMsgCountRef.current = 0;
+    // Se vacía la lista para no mostrar (ni scrollear sobre) los mensajes del
+    // chat anterior, y se marca que hay que bajar al final apenas carguen.
+    initialScrollPendingRef.current = true;
+    messageRefs.current = {};
+    setMessages([]);
+    setMessagesLoading(true);
+    setChatSearchOpen(false);
+    setChatSearch('');
+    setSelectMode(false);
+    setSelectedKeys([]);
+    setForwardItems(null);
+    setPendingFile(prev => { if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl); return null; });
     loadMessages(selected.id);
     loadCustomer(selected.id);
     loadSummary(selected.id);
@@ -504,14 +802,106 @@ export default function Conversations() {
     return () => clearInterval(pollMsgRef.current);
   }, [selected?.id]);
 
-  useEffect(() => {
+  // scrollTo sobre el contenedor (NUNCA scrollIntoView: arrastra a los
+  // contenedores padres y hace saltar todo el layout).
+  function scrollMessagesToBottom(smooth = false) {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  }
+
+  // useLayoutEffect: el salto al final ocurre antes de pintar, así al abrir un
+  // chat se ve directo el último mensaje (antes arrancaba arriba de todo).
+  useLayoutEffect(() => {
     const newLen = messages.length;
     const hadMore = newLen > prevMsgCountRef.current;
     prevMsgCountRef.current = newLen;
-    if (hadMore && atBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (initialScrollPendingRef.current) {
+      if (!newLen) return;
+      initialScrollPendingRef.current = false;
+      atBottomRef.current = true;
+      scrollMessagesToBottom(false);
+      return;
     }
+    if (hadMore && atBottomRef.current) scrollMessagesToBottom(true);
   }, [messages]);
+
+  // Imágenes/videos que terminan de cargar después agrandan el chat: si el
+  // agente estaba abajo, se lo mantiene abajo. 'load' no burbujea, por eso se
+  // escucha en fase de captura.
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const onMediaLoad = () => { if (atBottomRef.current) scrollMessagesToBottom(false); };
+    el.addEventListener('load', onMediaLoad, true);
+    el.addEventListener('loadedmetadata', onMediaLoad, true);
+    return () => {
+      el.removeEventListener('load', onMediaLoad, true);
+      el.removeEventListener('loadedmetadata', onMediaLoad, true);
+    };
+  }, [selected?.id]);
+
+  // ---- Buscador dentro del chat ----
+  const chatSearchMatches = useMemo(() => {
+    const q = normalizeForSearch(chatSearch.trim());
+    if (!q) return [];
+    const out = [];
+    messages.forEach((m, i) => { if (normalizeForSearch(messageSearchText(m)).includes(q)) out.push(i); });
+    return out;
+  }, [messages, chatSearch]);
+  const chatSearchCurrentPos = chatSearchMatches.length ? Math.min(chatSearchIdx, chatSearchMatches.length - 1) : -1;
+  const chatSearchCurrentMsg = chatSearchCurrentPos >= 0 ? chatSearchMatches[chatSearchCurrentPos] : -1;
+
+  // Al cambiar el texto buscado se arranca por la coincidencia más reciente (como WhatsApp).
+  useEffect(() => { setChatSearchIdx(Number.MAX_SAFE_INTEGER); }, [chatSearch]);
+
+  useEffect(() => {
+    if (!chatSearchOpen || chatSearchCurrentMsg < 0) return;
+    const el = messageRefs.current[chatSearchCurrentMsg];
+    const cont = messagesContainerRef.current;
+    if (!el || !cont) return;
+    const er = el.getBoundingClientRect();
+    const cr = cont.getBoundingClientRect();
+    cont.scrollTo({ top: cont.scrollTop + (er.top - cr.top) - cr.height / 2 + er.height / 2, behavior: 'smooth' });
+  }, [chatSearchCurrentMsg, chatSearchOpen]);
+
+  function stepChatSearch(dir) {
+    const n = chatSearchMatches.length;
+    if (!n) return;
+    setChatSearchIdx(((chatSearchCurrentPos + dir) % n + n) % n);
+  }
+
+  function closeChatSearch() {
+    setChatSearchOpen(false);
+    setChatSearch('');
+  }
+
+  // ---- Selección para reenviar ----
+  function startForwardSelection(key) {
+    setSelectMode(true);
+    setSelectedKeys([key]);
+  }
+
+  function toggleSelectedKey(key) {
+    setSelectedKeys(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
+
+  function cancelSelection() {
+    setSelectMode(false);
+    setSelectedKeys([]);
+  }
+
+  function openForwardModal() {
+    const items = messages.filter((m, i) => selectedKeys.includes(msgKey(m, i)));
+    if (items.length) setForwardItems(items);
+  }
+
+  function handleForwardDone(results) {
+    setForwardItems(null);
+    cancelSelection();
+    if (selected && results?.some(r => r.contactId === selected.id && r.sent)) loadMessages(selected.id);
+    loadConversations();
+  }
 
   function handleMessagesScroll() {
     const el = messagesContainerRef.current;
@@ -612,8 +1002,13 @@ export default function Conversations() {
     try {
       const res = await authFetch(BASE_URL + `/api/conversations/${contactId}/messages`);
       const data = await res.json();
+      // Un poll del chat anterior que vuelve tarde no tiene que pisar al actual.
+      if (contactId !== selectedIdRef.current) return;
       setMessages(data.messages ?? []);
-    } catch { setMessages([]); }
+    } catch { /* se reintenta en el próximo poll — no vaciar el chat por un error de red */ }
+    finally {
+      if (contactId === selectedIdRef.current) setMessagesLoading(false);
+    }
   }
 
   async function loadCustomer(contactId) {
@@ -791,16 +1186,76 @@ export default function Conversations() {
     setTemplateParams(tpl?.params?.map(() => '') ?? []);
   }
 
-  async function handleMediaSelect(e) {
-    const file = e.target.files?.[0];
+  const MAX_FILE_BYTES = 100 * 1024 * 1024; // tope de WhatsApp para documentos
+
+  function queueFile(file) {
     if (!file || !selected) return;
+    if (file.size > MAX_FILE_BYTES) {
+      alert(`⚠️ "${file.name}" pesa ${formatFileSize(file.size)}. WhatsApp acepta archivos de hasta 100 MB.`);
+      return;
+    }
+    setPendingFile(prev => {
+      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
+      return { file, caption: '', previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null };
+    });
+  }
+
+  function handleMediaSelect(e) {
+    const file = e.target.files?.[0];
     e.target.value = '';
+    queueFile(file);
+  }
+
+  function discardPendingFile() {
+    setPendingFile(prev => { if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl); return null; });
+  }
+
+  // WhatsApp sólo acepta fotos JPG/PNG: una WEBP/GIF/BMP se convierte acá.
+  async function convertImageToJpeg(file) {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!blob) throw new Error('No se pudo convertir la imagen');
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  }
+
+  function handlePaste(e) {
+    const file = e.clipboardData?.files?.[0];
+    if (file) { e.preventDefault(); queueFile(file); }
+  }
+
+  function handleDragOver(e) {
+    if (!canCompose || !e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    if (!dragOver) setDragOver(true);
+  }
+
+  function handleDrop(e) {
+    if (!canCompose) return;
+    e.preventDefault();
+    setDragOver(false);
+    queueFile(e.dataTransfer?.files?.[0]);
+  }
+
+  async function sendPendingFile() {
+    if (!pendingFile || !selected || sending) return;
     setSending(true);
     const quoted = replyingTo;
     setReplyingTo(null);
     try {
+      let file = pendingFile.file;
+      if (file.type.startsWith('image/') && !['image/jpeg', 'image/png'].includes(file.type)) {
+        file = await convertImageToJpeg(file).catch(() => file); // si no se puede, el backend avisa el motivo
+      }
       const form = new FormData();
-      form.append('file', file);
+      form.append('file', file, file.name);
+      if (pendingFile.caption.trim() && !file.type.startsWith('audio/')) form.append('caption', pendingFile.caption.trim());
       if (quoted) form.append('replyTo', JSON.stringify(quoted));
       const r = await authFetch(BASE_URL + `/api/conversations/${selected.id}/media`, {
         method: 'POST',
@@ -815,7 +1270,11 @@ export default function Conversations() {
         } else {
           alert(`⚠️ ${data.error ?? 'Error enviando archivo'}`);
         }
+        // Rechazado por formato/tamaño (400/413): se deja el adjunto en la
+        // barra para que el agente vea qué archivo era y lo descarte.
+        if (r.status === 400 || r.status === 413) return;
       }
+      discardPendingFile();
     } finally { setSending(false); }
   }
 
@@ -863,6 +1322,26 @@ export default function Conversations() {
     recordTimerRef.current = null;
   }
 
+  // ✕ mientras se graba: corta el micrófono y descarta lo grabado sin generar
+  // preview. (El botón ya existía pero llamaba a una función que no estaba
+  // definida → ReferenceError apenas aparecía → pantalla en blanco.)
+  function cancelRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      if (recorder.state !== 'inactive') recorder.stop();
+    }
+    mediaStreamRef.current?.getTracks().forEach(t => t.stop());
+    mediaStreamRef.current = null;
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+    clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+    setRecording(false);
+    setRecordSeconds(0);
+  }
+
   function discardRecordedAudio() {
     if (recordedAudio) URL.revokeObjectURL(recordedAudio.url);
     setRecordedAudio(null);
@@ -878,6 +1357,8 @@ export default function Conversations() {
       const ext = recordedAudio.mimeType.includes('ogg') ? 'ogg' : recordedAudio.mimeType.includes('mp4') ? 'm4a' : 'webm';
       const form = new FormData();
       form.append('file', recordedAudio.blob, `nota-de-voz.${ext}`);
+      // El backend la convierte a ogg/opus → le llega al cliente como nota de voz.
+      form.append('voiceNote', '1');
       if (quoted) form.append('replyTo', JSON.stringify(quoted));
       const r = await authFetch(BASE_URL + `/api/conversations/${selected.id}/media`, {
         method: 'POST',
@@ -942,6 +1423,7 @@ export default function Conversations() {
   }
 
   const approvedTemplates = templates.filter(t => t.metaStatus === 'APPROVED');
+  const canCompose = !!selected && isHuman && !isArchived && !isWindowExpired && !selectMode;
 
   const filtered = searchResults !== null
     ? searchResults
@@ -1078,6 +1560,14 @@ export default function Conversations() {
                 <div className={styles.threadActions}>
                   <button
                     type="button"
+                    className={`${styles.chatSearchToggle} ${chatSearchOpen ? styles.chatSearchToggleOn : ''}`}
+                    onClick={() => (chatSearchOpen ? closeChatSearch() : setChatSearchOpen(true))}
+                    title="Buscar en este chat"
+                  >
+                    🔍
+                  </button>
+                  <button
+                    type="button"
                     className={styles.profileToggleBtn}
                     onClick={() => setShowMobileProfile(v => !v)}
                     title="Ver perfil del cliente"
@@ -1208,35 +1698,86 @@ export default function Conversations() {
               </div>
             </div>
 
+            {chatSearchOpen && (
+              <div className={styles.chatSearchBar}>
+                <input
+                  className={styles.searchInput}
+                  placeholder="Buscar en este chat…"
+                  value={chatSearch}
+                  onChange={e => setChatSearch(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); stepChatSearch(e.shiftKey ? 1 : -1); }
+                    if (e.key === 'Escape') closeChatSearch();
+                  }}
+                  autoFocus
+                />
+                <span className={styles.chatSearchCount}>
+                  {chatSearch.trim()
+                    ? (chatSearchMatches.length ? `${chatSearchCurrentPos + 1} de ${chatSearchMatches.length}` : 'Sin resultados')
+                    : ''}
+                </span>
+                <button type="button" className={styles.chatSearchNav} onClick={() => stepChatSearch(-1)} disabled={!chatSearchMatches.length} title="Anterior (Enter)">↑</button>
+                <button type="button" className={styles.chatSearchNav} onClick={() => stepChatSearch(1)} disabled={!chatSearchMatches.length} title="Siguiente (Shift+Enter)">↓</button>
+                <button type="button" className={styles.chatSearchNav} onClick={closeChatSearch} title="Cerrar búsqueda">✕</button>
+              </div>
+            )}
+
             <div
-              className={styles.messages}
+              className={`${styles.messages} ${dragOver ? styles.messagesDragOver : ''}`}
               ref={messagesContainerRef}
               onScroll={handleMessagesScroll}
+              onDragOver={handleDragOver}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
             >
               {messages.length === 0 ? (
-                <p className={styles.noMessages}>Sin mensajes aún.</p>
+                <p className={styles.noMessages}>{messagesLoading ? 'Cargando mensajes…' : 'Sin mensajes aún.'}</p>
               ) : (
                 messages.map((msg, i) => {
                   const canRetry = msg.role === 'admin' && msg.msgStatus === 'error'
                     && msg.content?.trim() && !msg.mediaType
                     && !msg.content.startsWith('[Plantilla:');
+                  const key = msgKey(msg, i);
                   return (
                     <MessageBubble
-                      key={i}
+                      key={key}
                       msg={msg}
+                      msgIndex={i}
+                      rootRef={el => { if (el) messageRefs.current[i] = el; else delete messageRefs.current[i]; }}
                       onRetry={canRetry ? handleRetry : null}
                       onQuote={isHuman ? setReplyingTo : null}
+                      onForward={() => startForwardSelection(key)}
                       contactId={selected.id}
                       nameMap={nameMap}
+                      searchQuery={chatSearchOpen ? chatSearch : ''}
+                      isCurrentMatch={i === chatSearchCurrentMsg}
+                      selectMode={selectMode}
+                      isSelected={selectedKeys.includes(key)}
+                      onToggleSelect={() => toggleSelectedKey(key)}
                     />
                   );
                 })
               )}
-              <div ref={messagesEndRef} />
+              {dragOver && <div className={styles.dropHint}>Soltá el archivo para adjuntarlo</div>}
             </div>
 
             {/* Footer: depends on conversation state */}
-            {isArchived ? (
+            {selectMode ? (
+              <div className={styles.selectionBar}>
+                <button type="button" className={styles.selectionCancel} onClick={cancelSelection} title="Cancelar">✕</button>
+                <span className={styles.selectionCount}>
+                  {selectedKeys.length} seleccionado{selectedKeys.length === 1 ? '' : 's'}
+                </span>
+                <button
+                  type="button"
+                  className={styles.replyBtn}
+                  onClick={openForwardModal}
+                  disabled={!selectedKeys.length}
+                >
+                  ↪ Reenviar
+                </button>
+              </div>
+            ) : isArchived ? (
               <div className={styles.archivedBanner}>
                 <span>Conversación archivada</span>
                 <button
@@ -1362,7 +1903,41 @@ export default function Conversations() {
                     ⚠️ El cliente no escribe hace {Math.floor(lastClientHours)}h. La ventana de WhatsApp de 24h está por cerrarse — si no responde pronto, los mensajes dejarán de llegar.
                   </div>
                 )}
-                {recordedAudio ? (
+                {pendingFile ? (
+                  /* ---- Adjunto elegido: ver qué se manda + texto opcional ---- */
+                  <div className={styles.pendingFileRow}>
+                    {pendingFile.previewUrl ? (
+                      <img src={pendingFile.previewUrl} className={styles.pendingFileThumb} alt="" />
+                    ) : (
+                      <span className={styles.pendingFileIcon}>
+                        {pendingFile.file.type.startsWith('audio/') ? '🎵'
+                          : pendingFile.file.type.startsWith('video/') ? '🎬'
+                          : (DOC_ICONS[fileExt(pendingFile.file.name)] ?? '📄')}
+                      </span>
+                    )}
+                    <div className={styles.pendingFileInfo}>
+                      <span className={styles.pendingFileName}>{pendingFile.file.name}</span>
+                      <span className={styles.pendingFileSize}>{formatFileSize(pendingFile.file.size)}</span>
+                    </div>
+                    {!pendingFile.file.type.startsWith('audio/') && (
+                      <input
+                        className={styles.pendingFileCaption}
+                        placeholder="Agregar un mensaje (opcional)"
+                        value={pendingFile.caption}
+                        onChange={e => setPendingFile(prev => prev && { ...prev, caption: e.target.value })}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); sendPendingFile(); } }}
+                        disabled={sending}
+                        autoFocus
+                      />
+                    )}
+                    <button type="button" className={styles.recordDiscardBtn} onClick={discardPendingFile} disabled={sending} title="Quitar adjunto">
+                      ✕
+                    </button>
+                    <button type="button" className={styles.replyBtn} onClick={sendPendingFile} disabled={sending}>
+                      {sending ? 'Enviando…' : '📤 Enviar'}
+                    </button>
+                  </div>
+                ) : recordedAudio ? (
                   /* ---- Preview de nota de voz grabada: escuchar antes de mandar ---- */
                   <div className={styles.recordPreviewRow}>
                     <audio className={styles.recordPreviewPlayer} controls src={recordedAudio.url} />
@@ -1431,6 +2006,7 @@ export default function Conversations() {
                       value={reply}
                       onChange={e => setReply(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(e); } }}
+                      onPaste={handlePaste}
                       disabled={sending}
                       spellCheck="true"
                       lang="es"
@@ -1469,7 +2045,6 @@ export default function Conversations() {
                   <input
                     ref={mediaInputRef}
                     type="file"
-                    accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     className={styles.mediaFileInput}
                     onChange={handleMediaSelect}
                     disabled={sending}
@@ -1479,7 +2054,7 @@ export default function Conversations() {
                     className={styles.mediaBtn}
                     onClick={() => mediaInputRef.current?.click()}
                     disabled={sending}
-                    title="Enviar imagen / video / audio / documento"
+                    title="Adjuntar archivo (PDF, Word, Excel, imagen, video, audio…) — también podés pegar o arrastrar"
                   >
                     📎
                   </button>
@@ -1517,6 +2092,15 @@ export default function Conversations() {
           </>
         )}
       </main>
+
+      {forwardItems && (
+        <ForwardModal
+          items={forwardItems}
+          conversations={conversations}
+          onClose={() => setForwardItems(null)}
+          onDone={handleForwardDone}
+        />
+      )}
 
       {/* ---- Profile Panel ---- */}
       {selected && (
