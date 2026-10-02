@@ -531,7 +531,7 @@ function ForwardModal({ items, conversations, onClose, onDone }) {
               {list.length === 0 && <p className={styles.forwardEmpty}>Sin resultados</p>}
               {list.map(c => {
                 const closed = isWaWindowClosed(c);
-                const igBlocked = hasMedia && c.channel === 'instagram';
+                const igBlocked = hasMedia && c.channel !== 'whatsapp';
                 const isPicked = picked.some(p => p.id === c.id);
                 const disabled = closed || (!isPicked && picked.length >= MAX_TARGETS);
                 return (

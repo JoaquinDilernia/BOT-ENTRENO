@@ -582,7 +582,7 @@ router.post('/forward', async (req, res) => {
         const msgId = crypto.randomUUID();
         try {
           if (hasMedia) {
-            if (channel !== 'whatsapp') throw new MediaRejectedError('En Instagram sólo se puede reenviar texto');
+            if (channel !== 'whatsapp') throw new MediaRejectedError('Por este canal sólo se puede reenviar texto');
             const isAudio = m.mediaType === 'audio';
             const file = await getFile(m);
             const sent = await sendWhatsAppFile(contactId, { ...file, isVoiceNote: isAudio, caption: isAudio ? '' : text });
@@ -595,7 +595,9 @@ router.post('/forward', async (req, res) => {
           } else {
             const waMsgId = channel === 'whatsapp'
               ? await sendWhatsAppMessage(contactId, text)
-              : await sendInstagramMessage(contactId, text);
+              : channel === 'instagram'
+                ? await sendInstagramMessage(contactId, text)
+                : null; // otros canales (ej. chat web): el mensaje queda en el historial
             await appendMessage(contactId, {
               role: 'admin', content: text, msgId, msgStatus: 'sent', sentBy: req.agent.email, forwarded: true,
               ...(channel === 'whatsapp' && waMsgId && { waMsgId }),
