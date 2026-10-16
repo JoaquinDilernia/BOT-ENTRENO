@@ -429,6 +429,8 @@ async function processIncomingMessageInternal(msg) {
       botConfig,
       imageData,
       areas,
+      tools: [PRODUCT_SEARCH_TOOL],
+      runTool: runBotTool,
     });
   } catch (err) {
     console.error(`[bot] Claude falló definitivamente para ${from} tras reintentos:`, err.message);
@@ -509,6 +511,48 @@ async function processIncomingMessageInternal(msg) {
     await updateConversationStatus(from, 'resolved');
     console.log(`[bot] Conversación ${from} resuelta por el bot`);
   }
+}
+
+// resolveStockContext solo ve el último mensaje: si el cliente nombró el
+// producto antes ("quiero creatina star") y después pregunta "tienen stock?
+// 300 gr", busca "300 gr" y trae cualquier cosa. Con esta tool Claude arma la
+// búsqueda con el contexto de toda la charla y corrige typos.
+export const PRODUCT_SEARCH_TOOL = {
+  name: 'buscar_productos',
+  description: 'Busca productos en el catálogo online de Entreno (TiendaNube) y devuelve precio y disponibilidad por variante, en vivo. La búsqueda matchea contra el NOMBRE del producto, que suele ser "MARCA Tipo Tamaño" (ej: "STAR NUTRITION CREATINA MONOHIDRATO EEUU 300 GRS"). Usá palabras del nombre: marca, tipo de producto y tamaño.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      consulta: { type: 'string', description: 'Palabras clave del producto, ej: "star creatina 300" o "whey gold nutrition"' },
+    },
+    required: ['consulta'],
+  },
+};
+
+const TOOL_PRODUCT_LIMIT = 15;
+
+export async function runBotTool(name, input) {
+  if (name !== 'buscar_productos') return { error: `Herramienta desconocida: ${name}` };
+  const consulta = String(input?.consulta ?? '').trim();
+  if (!consulta) return { error: 'Falta la consulta' };
+
+  let products = await searchProducts(consulta);
+  // Si la búsqueda por texto no trae nada pero la consulta nombra un rubro
+  // conocido (creatina, whey…), el rubro completo sirve de respaldo.
+  if (!products.length) {
+    const categoryId = matchCategorySynonym(consulta);
+    if (categoryId) products = await searchProductsByCategory(categoryId);
+  }
+  if (!products.length) return { resultado: `No se encontraron productos para "${consulta}".` };
+
+  // TiendaNube no ordena por relevancia: los que contienen más palabras de la
+  // consulta van primero, así "star creatina 300" no queda tapado por otros.
+  const words = consulta.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  const nameOf = p => (typeof p.name === 'string' ? p.name : (p.name?.es ?? Object.values(p.name ?? {})[0] ?? '')).toLowerCase();
+  const score = p => words.filter(w => nameOf(p).includes(w)).length;
+  products = [...products].sort((a, b) => score(b) - score(a));
+
+  return { resultado: formatProductsSummary(products, TOOL_PRODUCT_LIMIT) };
 }
 
 async function resolveStockContext(text) {

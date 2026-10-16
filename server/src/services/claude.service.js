@@ -142,23 +142,55 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   const {
     knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null,
     customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, areas = [],
+    tools = [], runTool = null,
   } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, areas, customerTags);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, areas, customerTags, tools.length > 0);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
-  const response = await callAnthropicAPI({
-    model: MODEL,
-    max_tokens: 1024,
-    system: systemContent,
-    messages,
-  });
+  // Loop de tool-use (mismo patrón que Selvaggio): mientras Claude pida tools,
+  // se ejecutan y se le devuelven los resultados. El turno del asistente se
+  // reenvía con su `content` COMPLETO (incluidos los bloques thinking) y todos
+  // los tool_result van juntos en un único mensaje de usuario.
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const response = await callAnthropicAPI({
+      model: MODEL,
+      max_tokens: 2048,
+      system: systemContent,
+      messages,
+      ...(tools.length && { tools }),
+    });
+    logUsage(response.usage, round === 0 ? 'bot_reply' : 'bot_reply_tool');
 
-  logUsage(response.usage, 'bot_reply');
-  return extractText(response);
+    if (response.stop_reason !== 'tool_use' || !runTool) return extractText(response);
+
+    const calls = response.content.filter(b => b.type === 'tool_use');
+    const results = await Promise.all(calls.map(async (call) => {
+      let output;
+      try {
+        output = await runTool(call.name, call.input ?? {});
+      } catch (err) {
+        output = { error: err.message };
+      }
+      console.log(`[claude] tool ${call.name}`, JSON.stringify(call.input), '→', JSON.stringify(output).slice(0, 300));
+      return {
+        type: 'tool_result',
+        tool_use_id: call.id,
+        content: JSON.stringify(output),
+        ...(output?.error && { is_error: true }),
+      };
+    }));
+    messages.push({ role: 'assistant', content: response.content });
+    messages.push({ role: 'user', content: results });
+  }
+
+  console.warn('[claude] Se alcanzó el máximo de rondas de tools sin respuesta final');
+  return 'Perdón, se me complicó revisar eso. ¿Me lo repetís o preferís que te pase con alguien del equipo?';
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], areas = [], customerTags = []) {
+const MAX_TOOL_ROUNDS = 4;
+
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], areas = [], customerTags = [], hasProductTool = false) {
   const botName = botConfig.botName || 'Entreno';
   const businessName = botConfig.businessName || 'Entreno';
   const personality = botConfig.botPersonality ||
@@ -169,6 +201,10 @@ Si no sabés algo, lo decís honestamente y ofrecés derivar a la persona correc
 Nunca inventás información sobre productos, precios, stock, pedidos, envíos o marcas — solo usás los datos que te den. Si algo no está en la información que tenés, lo decís honestamente en vez de inventar o suponer.`;
 
   let prompt = `Sos el asistente virtual de ${businessName}. Tu nombre es ${botName}.\n${personality}`;
+  // Fuera de `personality` a propósito: botPersonality se puede pisar desde
+  // el panel y estas reglas tienen que valer siempre.
+  prompt += `\n\nREGLA — SOLO ASISTÍS, NO VENDÉS: Por este chat no se vende, no se reservan ni se apartan productos y no se toman pedidos. Las compras se hacen únicamente en la web (entreno.com.ar). Nunca ofrezcas reservar, separar, guardar o "anotar" un producto, ni armar un pedido por acá — si el cliente quiere comprar, guialo a la página del producto en la web.`;
+  prompt += `\n\nFORMATO: Escribís para WhatsApp. Para negrita usá UN solo asterisco (*así*), nunca dos (**así**) — no uses títulos con # ni otro markdown.`;
   prompt += buildEscalationInstructions(areas);
   if (knowledgeBase) {
     prompt += `\n\n--- INFORMACIÓN DE LA EMPRESA ---\n${knowledgeBase}`;
@@ -202,6 +238,16 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
 - "Sin stock" → no disponible al momento de la consulta.
 - Nunca menciones cantidades numéricas — solo usás las etiquetas anteriores.
 - Siempre agregá el disclaimer: "El stock puede variar por las ventas de la tienda."`;
+  }
+  if (hasProductTool) {
+    prompt += `\n\n--- BUSCAR PRODUCTOS (precio y stock) ---
+Tenés la herramienta buscar_productos, que consulta el catálogo de la tienda online EN VIVO (precio y stock por variante).
+- Usala SIEMPRE que el cliente pregunte por stock, precio o disponibilidad de un producto y ese producto puntual NO esté en "PRECIO Y STOCK DEL PRODUCTO" (esa sección se arma solo con el último mensaje y puede traer productos que no tienen nada que ver).
+- Armá la consulta con TODO el contexto de la charla: marca + tipo de producto + tamaño, aunque cada dato lo haya dicho en un mensaje distinto (ej: dijo "quiero creatina star" y después "tienen stock? 300 gr" → consulta "star creatina 300").
+- Corregí errores de tipeo obvios (ej: "creativa" → "creatina").
+- Si no encuentra nada, probá una vez con menos palabras (ej: solo marca + tipo) antes de decir que no lo tenés.
+- Nunca digas que no tenés el dato de stock sin haber usado la herramienta.
+- Las mismas reglas de arriba aplican al resultado: etiquetas (Disponible / Quedan pocas unidades / Sin stock), nunca cantidades, precio tal cual figura.`;
   }
   if (productInfo) {
     prompt += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;
