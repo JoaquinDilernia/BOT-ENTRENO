@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Stats.module.css';
 
@@ -73,14 +74,15 @@ export default function Stats() {
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
 
+  const qs = period === 'custom'
+    ? `period=custom&from=${customFrom}&to=${customTo}`
+    : `period=${period}`;
+
   useEffect(() => {
     if (period === 'custom' && (!customFrom || !customTo)) return;
 
     setLoading(true);
     setError(null);
-    const qs = period === 'custom'
-      ? `period=custom&from=${customFrom}&to=${customTo}`
-      : `period=${period}`;
     authFetch(BASE_URL + `/api/stats?${qs}`)
       .then(r => {
         if (!r.ok) throw new Error(`Error ${r.status} al cargar estadísticas`);
@@ -242,6 +244,7 @@ export default function Stats() {
           <div className={styles.grid2}>
             <section className={styles.section}>
               <h2 className={styles.sectionTitle}>Por agente</h2>
+              <p className={styles.labelHint}>Conversaciones en las que respondió cada uno en el período (un chat puede tener respuestas del bot y de un agente).</p>
               <div className={styles.agentRows}>
                 {data.byAgent.map((a, idx) => {
                   const color = agentColor(idx);
@@ -251,7 +254,7 @@ export default function Stats() {
                         <span className={styles.dot} style={{ background: color }} />
                         <div>
                           <div className={styles.agentName}>{a.name}</div>
-                          <div className={styles.agentSub}>{a.handled} conv · {a.resolved} res.</div>
+                          <div className={styles.agentSub}>{a.handled} conv respondidas · {a.messages ?? 0} msj · {a.resolved} res.</div>
                         </div>
                       </div>
                       <div className={styles.hBarTrack}>
@@ -328,13 +331,7 @@ export default function Stats() {
 
           {/* Labels */}
           {data.labelCounts.length > 0 && (
-            <section className={styles.section}>
-              <h2 className={styles.sectionTitle}>Etiquetas más usadas</h2>
-              <HBars
-                entries={data.labelCounts.map(l => ({ label: l.name, color: 'var(--color-primary)', value: l.count }))}
-                max={data.labelCounts[0].count}
-              />
-            </section>
+            <LabelStats key={qs} labels={data.labelCounts} total={data.total} periodQs={qs} />
           )}
 
         </div>
@@ -376,6 +373,120 @@ function TrendChart({ data }) {
         );
       })}
     </div>
+  );
+}
+
+const LABELS_COLLAPSED = 10;
+
+function normalize(s) {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+function fmtActivity(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function LabelStats({ labels, total, periodQs }) {
+  const navigate = useNavigate();
+  const [query, setQuery]       = useState('');
+  const [showAll, setShowAll]   = useState(false);
+  const [openLabel, setOpenLabel] = useState(null);
+  const [convs, setConvs]       = useState(null); // null = cargando
+  const [convsError, setConvsError] = useState(null);
+
+  function toggleLabel(name) {
+    if (openLabel === name) { setOpenLabel(null); return; }
+    setOpenLabel(name);
+    setConvs(null);
+    setConvsError(null);
+    authFetch(BASE_URL + `/api/stats/labels/conversations?${periodQs}&label=${encodeURIComponent(name)}`)
+      .then(r => {
+        if (!r.ok) throw new Error(`Error ${r.status} al cargar conversaciones`);
+        return r.json();
+      })
+      .then(d => setConvs(d.conversations))
+      .catch(err => setConvsError(err.message));
+  }
+
+  const q = normalize(query.trim());
+  const matches = q ? labels.filter(l => normalize(l.name).includes(q)) : labels;
+  const visible = q || showAll ? matches : matches.slice(0, LABELS_COLLAPSED);
+  const max = labels[0].count;
+
+  return (
+    <section className={styles.section}>
+      <div className={styles.labelHeader}>
+        <h2 className={styles.sectionTitle}>Etiquetas</h2>
+        <input
+          type="search"
+          className={styles.labelSearch}
+          placeholder={`Buscar entre ${labels.length} etiquetas…`}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+        />
+      </div>
+      <p className={styles.labelHint}>
+        Conversaciones con actividad en el período. Tocá una etiqueta para ver sus conversaciones.
+      </p>
+
+      {visible.length === 0 ? (
+        <p className={styles.empty}>Ninguna etiqueta coincide con "{query}" en este período.</p>
+      ) : (
+        <div className={styles.labelList}>
+          {visible.map(l => {
+            const isOpen = openLabel === l.name;
+            return (
+              <div key={l.name}>
+                <button
+                  type="button"
+                  className={`${styles.labelRow} ${isOpen ? styles.labelRowOpen : ''}`}
+                  onClick={() => toggleLabel(l.name)}
+                  aria-expanded={isOpen}
+                >
+                  <span className={styles.labelName}>{l.name}</span>
+                  <span className={styles.labelTrack}>
+                    <span className={styles.hBarFill} style={{ width: `${pct(l.count, max)}%`, background: 'var(--color-primary)' }} />
+                  </span>
+                  <span className={styles.labelCount}>{l.count}</span>
+                  <span className={styles.labelPct}>{pct(l.count, total)}%</span>
+                  <span className={styles.labelChevron}>{isOpen ? '▾' : '▸'}</span>
+                </button>
+                {isOpen && convsError && <p className={styles.labelConvsMsg}>{convsError}</p>}
+                {isOpen && !convsError && !convs && <p className={styles.labelConvsMsg}>Cargando conversaciones…</p>}
+                {isOpen && convs && (
+                  <ul className={styles.labelConvs}>
+                    {convs.map(c => (
+                      <li key={c.id} className={styles.labelConv}>
+                        <span className={styles.labelConvName}>{c.contactName || c.id}</span>
+                        <span className={styles.labelConvMeta}>{c.contactName ? c.id : ''}</span>
+                        <span className={styles.labelConvMeta}>{CHANNEL_META[c.channel]?.label ?? c.channel}</span>
+                        <span className={styles.labelConvMeta}>{STATUS_META[c.status]?.label ?? c.status}</span>
+                        <span className={styles.labelConvMeta}>{fmtActivity(c.lastActivityAt)}</span>
+                        <button
+                          type="button"
+                          className={styles.labelConvOpen}
+                          onClick={() => navigate(`/conversations?open=${encodeURIComponent(c.id)}`)}
+                        >
+                          Abrir
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!q && matches.length > LABELS_COLLAPSED && (
+        <button type="button" className={styles.labelMore} onClick={() => setShowAll(v => !v)}>
+          {showAll ? 'Ver menos' : `Ver todas (${matches.length})`}
+        </button>
+      )}
+    </section>
   );
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch, BASE_URL } from '../lib/api';
 import { useNotifications } from '../hooks/useNotifications.js';
@@ -631,6 +632,20 @@ export default function Conversations() {
   const { agent } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
+
+  // Link directo a una conversación (?open=<id>, ej. desde Estadísticas → Etiquetas).
+  // Se pide por id porque puede no estar entre las 200 que trae la lista.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openId = searchParams.get('open');
+  useEffect(() => {
+    if (!openId) return;
+    authFetch(BASE_URL + `/api/conversations/${encodeURIComponent(openId)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(conv => { if (conv) setSelected(conv); })
+      .catch(() => {})
+      .finally(() => setSearchParams({}, { replace: true }));
+  }, [openId]);
+
   const [showMobileProfile, setShowMobileProfile] = useState(false); // mobile-only: perfil como panel deslizable
   const [messages, setMessages] = useState([]);
   const [customer, setCustomer] = useState(null);

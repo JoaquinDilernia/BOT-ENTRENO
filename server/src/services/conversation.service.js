@@ -301,6 +301,12 @@ export async function listConversations(filters = {}) {
   return docs;
 }
 
+// Una conversación puntual (para abrirla por link directo, ej. desde Estadísticas).
+export async function getConversationById(contactId) {
+  const doc = await getDb().collection(COLLECTION).doc(contactId).get();
+  return doc.exists ? mapConversationDoc(doc, doc.data()) : null;
+}
+
 export async function listArchivedConversations() {
   const db = getDb();
   const snapshot = await db.collection(COLLECTION)

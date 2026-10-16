@@ -142,6 +142,12 @@ router.get('/', async (req, res) => {
     for (const a of agents) agentBuckets[a.email] = { handled: 0, resolved: 0 };
     for (const area of areas) agentBuckets[area.id] = { handled: 0, resolved: 0 };
 
+    // "Por agente" cuenta quién RESPONDIÓ, no a quién quedó asignada: las
+    // derivaciones quedan asignadas al área, así que el agente que las
+    // contesta casi no aparecía. Los mensajes de agentes guardan sentBy (email).
+    const repliedBuckets = { bot: { replied: 0, messages: 0, resolved: 0 } };
+    for (const a of agents) repliedBuckets[a.email] = { replied: 0, messages: 0, resolved: 0 };
+
     const areaBuckets = {};
     for (const area of areas) areaBuckets[area.id] = { name: area.name, handled: 0, resolved: 0, avgFirstResponseMin: null, _responseSamples: [] };
 
@@ -166,6 +172,26 @@ router.get('/', async (req, res) => {
     for (const conv of conversations) {
       const rawStatus = conv.status ?? 'bot';
       const status    = rawStatus === 'urgent' ? 'bot' : rawStatus; // legado: 'urgent' era status, ahora es flag
+
+      // Respuestas dentro del período: bot = role 'assistant'; agente = role
+      // 'admin' con sentBy. Las difusiones también llevan sentBy (quien la
+      // creó) pero no son una respuesta → se excluyen por su prefijo.
+      const repliedHere = new Set();
+      for (const m of conv.messages ?? []) {
+        if (!isInRange(m.timestamp, startMs, endMs)) continue;
+        let key = null;
+        if (m.role === 'assistant') key = 'bot';
+        else if (m.role === 'admin' && !String(m.content ?? '').startsWith('[Difusión')) key = m.sentBy ?? null;
+        if (!key || !repliedBuckets[key]) continue;
+        repliedBuckets[key].messages++;
+        repliedHere.add(key);
+      }
+      const closedHere = status === 'resolved' || status === 'bot_archived';
+      for (const key of repliedHere) {
+        repliedBuckets[key].replied++;
+        if (closedHere) repliedBuckets[key].resolved++;
+      }
+
       const channel   = conv.channel ?? 'whatsapp';
       const isClosed  = status === 'resolved' || status === 'bot_archived';
       // Una conversación cerrada casi siempre tiene assignedTo en null (las
@@ -267,23 +293,30 @@ router.get('/', async (req, res) => {
     const avgFirstResponseMin = avg(firstResponseSamples);
     const avgResolutionMin = avg(resolutionSamples);
 
+    // Todas las etiquetas (antes se cortaba al top 8 y las chicas no se podían ver).
+    // Las conversaciones de cada etiqueta se piden aparte (/labels/conversations)
+    // al tocarla, para no mandar miles de filas en cada carga.
     const labelCounts = Object.entries(labelMap)
       .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
     // Las conversaciones derivadas a un área (sin asignar todavía a
     // una persona puntual) ya se cuentan en "Por área" — antes acá
     // se agregaba una fila extra "{área} (área.)" con el mismo número,
     // que se veía como un agente fantasma duplicado.
+    // handled = conversaciones en las que respondió en el período;
+    // resolved: bot = cerradas sin agente (resolvedBy); agentes = cerradas en
+    // las que respondió (el cierre suele quedar a nombre del área).
     const byAgent = [
-      { id: 'bot', name: 'Bot (Asistente)', ...agentBuckets['bot'] },
+      { id: 'bot', name: 'Bot (Asistente)', handled: repliedBuckets.bot.replied, messages: repliedBuckets.bot.messages, resolved: agentBuckets.bot.resolved },
       ...agents.map(a => ({
         id: a.id,
         name: a.name ?? a.email,
-        ...(agentBuckets[a.email] ?? { handled: 0, resolved: 0 }),
+        handled: repliedBuckets[a.email]?.replied ?? 0,
+        messages: repliedBuckets[a.email]?.messages ?? 0,
+        resolved: repliedBuckets[a.email]?.resolved ?? 0,
       })),
-    ];
+    ].sort((x, y) => (x.id === 'bot' ? -1 : y.id === 'bot' ? 1 : y.handled - x.handled));
 
     const byArea = areas
       .map(area => ({
@@ -323,6 +356,35 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('[stats]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Conversaciones de una etiqueta en el período — mismo criterio que labelCounts
+// (actividad, updatedAt, dentro del rango), así la lista coincide con el número.
+router.get('/labels/conversations', async (req, res) => {
+  try {
+    const label = req.query.label;
+    if (!label) return res.status(400).json({ error: 'Falta la etiqueta' });
+    const { start, end } = getPeriodRange(req.query.period ?? 'week', req.query.from, req.query.to);
+    const snap = await getDb().collection('bot-entreno_conversations')
+      .where('updatedAt', '>=', admin.firestore.Timestamp.fromDate(start))
+      .where('updatedAt', '<=', admin.firestore.Timestamp.fromDate(end))
+      .get();
+    const conversations = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(c => (c.labels ?? []).includes(label))
+      .map(c => ({
+        id: c.id,
+        contactName: c.contactName ?? null,
+        channel: c.channel ?? 'whatsapp',
+        status: c.status === 'urgent' ? 'bot' : (c.status ?? 'bot'),
+        lastActivityAt: toDate(c.updatedAt)?.toISOString() ?? null,
+      }))
+      .sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''));
+    res.json({ label, conversations });
+  } catch (err) {
+    console.error('[stats/labels]', err);
     res.status(500).json({ error: err.message });
   }
 });

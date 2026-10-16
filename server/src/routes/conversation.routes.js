@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import {
   listConversations,
   listArchivedConversations,
+  getConversationById,
   searchConversations,
   getConversationHistory,
   updateConversationStatus,
@@ -164,6 +165,17 @@ router.get('/archived', async (req, res) => {
   try {
     const conversations = await listArchivedConversations();
     res.json({ conversations });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Una conversación puntual por id — la usa el link directo ?open= desde Estadísticas.
+router.get('/:contactId', async (req, res) => {
+  try {
+    const conversation = await getConversationById(req.params.contactId);
+    if (!conversation) return res.status(404).json({ error: 'Conversación no encontrada' });
+    res.json(conversation);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
