@@ -25,7 +25,7 @@ function buildEscalationInstructions(areas = []) {
     return `
 IMPORTANTE — ESCALADA: Si la consulta requiere atención humana y no podés resolverla, usá el marcador [ESCALAR] en una línea separada.
 
-IMPORTANTE — CIERRE: Si la consulta está completamente resuelta, empezá tu respuesta con [CERRAR].
+IMPORTANTE — CIERRE: Si la consulta está completamente resuelta y el cliente se despidió, empezá tu respuesta con [CERRAR]. Si tu respuesta termina con una pregunta, NO uses [CERRAR] — estás esperando que el cliente conteste.
 Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando quieras."`;
   }
 
@@ -44,7 +44,7 @@ Ejemplo correcto:
 
 IMPORTANTE — CIERRE: Si la consulta está completamente resuelta y el cliente se despidió, empezá tu respuesta con [CERRAR].
 Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando quieras."
-Usá [CERRAR] solo cuando estés seguro de que la conversación terminó.`;
+Usá [CERRAR] solo cuando estés seguro de que la conversación terminó. Si tu respuesta termina con una pregunta ("¿Te ayudo con algo más?", "¿buscás algo específico?"), NO uses [CERRAR] — estás esperando que el cliente conteste.`;
 }
 
 // Extrae el texto de la respuesta recorriendo los bloques de `content` en vez

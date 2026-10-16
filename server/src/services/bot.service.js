@@ -1,4 +1,5 @@
 import { generateBotResponse } from './claude.service.js';
+import { endsWithQuestion } from './closeGuard.js';
 import { getKnowledgeBasePrompt } from './knowledge.service.js';
 import {
   getOrCreateConversation,
@@ -444,10 +445,12 @@ async function processIncomingMessageInternal(msg) {
   console.log(`[bot] Claude respondió (${botReply.length} chars) para ${from}`);
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, areas);
-  const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
+  const { shouldClose: closeMarker, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
   const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
   const cleanText = toWhatsAppBold(textAfterTags);
+  const shouldClose = closeMarker && !endsWithQuestion(cleanText);
+  if (closeMarker && !shouldClose) console.log(`[bot] [CERRAR] ignorado para ${from}: la respuesta termina en pregunta`);
 
   await appendMessage(from, { role: 'assistant', content: cleanText });
 
