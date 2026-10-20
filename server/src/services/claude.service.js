@@ -2,17 +2,24 @@ import https from 'https';
 import { getDb } from './firebase.service.js';
 
 const MODEL = 'claude-sonnet-5';
-const PRICING = { inputPerMTok: 2.00, outputPerMTok: 10.00 };
+// Caché de prompt: escribir cuesta 1.25x la entrada (TTL 5 min), leer 0.1x.
+const PRICING = { inputPerMTok: 2.00, outputPerMTok: 10.00, cacheWritePerMTok: 2.50, cacheReadPerMTok: 0.20 };
 
 function logUsage(usage, type) {
-  if (!usage?.input_tokens) return;
+  if (!usage?.input_tokens && !usage?.cache_read_input_tokens) return;
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
   const costUSD =
     (usage.input_tokens / 1e6) * PRICING.inputPerMTok +
+    (cacheWrite / 1e6) * PRICING.cacheWritePerMTok +
+    (cacheRead / 1e6) * PRICING.cacheReadPerMTok +
     (usage.output_tokens / 1e6) * PRICING.outputPerMTok;
   getDb().collection('bot-entreno_usage_logs').add({
     service: 'claude',
     model: MODEL,
-    inputTokens: usage.input_tokens,
+    inputTokens: usage.input_tokens, // sólo la parte NO cacheada
+    cacheWriteTokens: cacheWrite,
+    cacheReadTokens: cacheRead,
     outputTokens: usage.output_tokens,
     costUSD: Math.round(costUSD * 1e6) / 1e6,
     type,
@@ -210,13 +217,18 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
     prompt += `\n\n--- INFORMACIÓN DE LA EMPRESA ---\n${knowledgeBase}`;
     prompt += `\n\nIMPORTANTE — USO DE ESTA INFORMACIÓN: Es TU ÚNICA fuente de verdad sobre servicios, precios, procesos y políticas. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente. Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y ofrecé derivar a alguien del equipo.`;
   }
-  if (customerContext) prompt += `\n\n--- PERFIL DEL CONTACTO ---\n${customerContext}`;
+  // Caché de prompt: `prompt` junta lo que es IGUAL para todos los clientes y
+  // va en un bloque cacheado (~10% del costo); `dyn` junta lo que cambia por
+  // cliente/mensaje (perfil, pedido, stock, ficha) y va al final, sin caché.
+  // No meter nada variable en `prompt`: rompe el caché para todos.
+  let dyn = '';
+  if (customerContext) dyn += `\n\n--- PERFIL DEL CONTACTO ---\n${customerContext}`;
 
   prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, es porque no hay datos reales, y ahí no podés afirmar ni sugerir que encontraste un pedido, aunque el número se parezca a algo mencionado antes. Si el cliente menciona un pedido/compra y no tenés información del pedido en este prompt, pedile el número de pedido (puede mandarlo con o sin "#", solo el número alcanza) para buscarlo. Si no lo tiene a mano o ya lo buscaste y no apareció, como último recurso pedile el email con el que compró.`;
   if (orderInfo) {
-    prompt += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
-    prompt += `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad.`;
-    prompt += `\n\nGuía para interpretar el pedido:
+    dyn += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
+    dyn += `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad.`;
+    dyn += `\n\nGuía para interpretar el pedido:
 - pago "pagado" + envio "enviado" → en camino, compartí el tracking si hay.
 - pago "pagado" + envio "en preparación" o "pendiente de preparación" → se está preparando, próximamente se envía.
 - pago "pagado" + envio "entregado" → ya fue entregado.
@@ -226,11 +238,11 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
 - Si hay tracking, compartilo directamente sin que lo pida.
 - Si hay nota en el pedido, tenerla en cuenta para dar contexto.`;
   } else if (orderRef) {
-    prompt += `\n\n--- BÚSQUEDA DE PEDIDO "#${orderRef}" ---\nSe intentó buscar este pedido en Tienda Nube AHORA MISMO y NO se encontró ningún resultado. No existe. No inventes un número, fecha, cliente o producto alternativo por más que "te suene" a algo — decile honestamente al cliente que no lo encontraste. Pedile que confirme bien el número de pedido, o como alternativa el email con el que compró.`;
+    dyn += `\n\n--- BÚSQUEDA DE PEDIDO "#${orderRef}" ---\nSe intentó buscar este pedido en Tienda Nube AHORA MISMO y NO se encontró ningún resultado. No existe. No inventes un número, fecha, cliente o producto alternativo por más que "te suene" a algo — decile honestamente al cliente que no lo encontraste. Pedile que confirme bien el número de pedido, o como alternativa el email con el que compró.`;
   }
   if (stockInfo) {
-    prompt += `\n\n--- PRECIO Y STOCK DEL PRODUCTO ---\n${stockInfo}`;
-    prompt += `\n\nGuía para responder con esta información:
+    dyn += `\n\n--- PRECIO Y STOCK DEL PRODUCTO ---\n${stockInfo}`;
+    dyn += `\n\nGuía para responder con esta información:
 - El precio SÍ se comparte tal cual figura acá (incluido el precio con descuento si aparece "antes $X"). Nunca lo inventes ni lo redondees.
 - Si aparecen varios productos, elegí los relevantes a la consulta del cliente — no hace falta leerle los 8 si preguntó por uno puntual.
 - "Disponible" → hay stock.
@@ -250,8 +262,8 @@ Tenés la herramienta buscar_productos, que consulta el catálogo de la tienda o
 - Las mismas reglas de arriba aplican al resultado: etiquetas (Disponible / Quedan pocas unidades / Sin stock), nunca cantidades, precio tal cual figura.`;
   }
   if (productInfo) {
-    prompt += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;
-    prompt += `\n\nUsá esta ficha para responder preguntas sobre el producto (marca, presentación, sabor, uso, etc). Si la descripción no cubre lo que te preguntan, decilo honestamente en vez de inventar.`;
+    dyn += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;
+    dyn += `\n\nUsá esta ficha para responder preguntas sobre el producto (marca, presentación, sabor, uso, etc). Si la descripción no cubre lo que te preguntan, decilo honestamente en vez de inventar.`;
   }
   if (availableLabels.length) {
     prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).
@@ -282,7 +294,9 @@ Categorías (basadas en el catálogo real de Entreno):
     if (guide) prompt += `\nGuía del negocio:\n${guide}`;
   }
 
-  return prompt;
+  const blocks = [{ type: 'text', text: prompt, cache_control: { type: 'ephemeral' } }];
+  if (dyn.trim()) blocks.push({ type: 'text', text: dyn.trim() });
+  return blocks;
 }
 
 function buildMessages(conversationHistory, newMessage, imageData = null) {
