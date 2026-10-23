@@ -1,9 +1,30 @@
 /* ============================================
    ENTRENO — Design System
    Paleta: beige cálido / carbón / rojo
+   (tokens WhatsApp nativo mapeados a la paleta de Entreno)
    ============================================ */
 
 :root {
+  /* Marca (la pisa BrandProvider desde Config; derivados = brandVars('#343535')) */
+  --brand: #343535;
+  --brand-soft: #e7e7e7;
+  --brand-ink: #222222;
+
+  /* WhatsApp nativo, en la paleta de Entreno */
+  --wpp-out: #d9fdd3;
+  --chat-bg: #efeae2;
+  --chat-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cg fill='none' stroke='%23d8d1c4' stroke-width='1.2'%3E%3Ccircle cx='14' cy='16' r='5'/%3E%3Cpath d='M50 10l6 6-6 6'/%3E%3Crect x='30' y='48' width='12' height='9' rx='2'/%3E%3Cpath d='M64 52c4 0 6 3 6 6'/%3E%3Cpath d='M8 60l6-4 4 6'/%3E%3C/g%3E%3C/svg%3E");
+  --rail: #1e1f1f;
+  --ink: #1c1a18;
+  --mute: #706860;
+  --line: #ddd8d0;
+  --soft: #ede9e3;
+  --st-wait: #c44040;
+  --st-warn: #d97706;
+  --st-agent: #7c5cbf;
+  --st-ok: #3d9e6a;
+  --st-label: #a08060;
+
   /* Colores base */
   --color-bg: #f5f2ee;
   --color-surface: #ffffff;
@@ -12,9 +33,9 @@
   --color-border: #ddd8d0;
   --color-border-strong: #c8c2b8;
 
-  /* Brand — carbón */
-  --color-primary: #343535;
-  --color-primary-dark: #1e1f1f;
+  /* Brand — carbón (sigue el color de marca configurable) */
+  --color-primary: var(--brand);
+  --color-primary-dark: var(--brand-ink);
   --color-primary-light: #5c5d5d;
   --color-primary-subtle: #efece8;
   --color-primary-bg: #e4e1dc;
@@ -135,3 +156,24 @@ ul, ol { list-style: none; }
   outline-offset: 2px;
 }
 :focus:not(:focus-visible) { outline: none; }
+
+/* ---- Animaciones de entrada (solo bajo .is-entering) ---- */
+.is-entering .anim-rise { opacity: 0; transform: translateY(10px); animation: animRise .5s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: var(--d, 0ms); }
+.is-entering .anim-pop { opacity: 0; transform: scale(.92) translateY(6px); transform-origin: bottom left; animation: animPop .45s cubic-bezier(.2,1.4,.4,1) forwards; animation-delay: var(--d, 0ms); }
+.is-entering .anim-grow-y { transform-origin: bottom; transform: scaleY(0); animation: animGrowY .8s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: var(--d, 0ms); }
+.is-entering .anim-grow-x { transform-origin: left; transform: scaleX(0); animation: animGrowX .9s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: var(--d, 0ms); }
+.is-entering .anim-draw { stroke-dasharray: 600; stroke-dashoffset: 600; animation: animDraw 1.4s ease forwards; animation-delay: var(--d, 0ms); }
+
+@keyframes animRise { to { opacity: 1; transform: none; } }
+@keyframes animPop { to { opacity: 1; transform: none; } }
+@keyframes animGrowY { to { transform: scaleY(1); } }
+@keyframes animGrowX { to { transform: scaleX(1); } }
+@keyframes animDraw { to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .is-entering .anim-rise,
+  .is-entering .anim-pop,
+  .is-entering .anim-grow-y,
+  .is-entering .anim-grow-x,
+  .is-entering .anim-draw { animation: none; opacity: 1; transform: none; stroke-dasharray: none; stroke-dashoffset: 0; }
+}

@@ -9,8 +9,8 @@
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
+  background: var(--rail);
+  color: #fff;
   display: flex;
   flex-direction: column;
   padding: var(--space-4) 0;
@@ -37,9 +37,9 @@
   width: 22px;
   height: 22px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-alt);
-  color: var(--color-text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.75);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
@@ -49,7 +49,7 @@
   flex-shrink: 0;
   transition: all var(--transition-fast);
 }
-.collapseBtn:hover { background: var(--color-surface); color: var(--color-text); border-color: var(--color-text-muted); }
+.collapseBtn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; border-color: rgba(255, 255, 255, 0.35); }
 .sidebarCollapsed .collapseBtn { align-self: center; margin: 0 0 var(--space-3); }
 
 .brand {
@@ -63,7 +63,7 @@
   width: 36px;
   height: 36px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  background: var(--brand);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -82,14 +82,14 @@
 
 .brandName {
   font-size: var(--font-size-md);
-  font-weight: 600;
-  color: var(--color-text);
+  font-weight: 700;
+  color: #fff;
   letter-spacing: -0.3px;
 }
 
 .brandSub {
   font-size: var(--font-size-xs);
-  color: var(--color-text-faint);
+  color: rgba(255, 255, 255, 0.55);
   font-weight: 400;
 }
 
@@ -109,6 +109,7 @@
 }
 
 .navItem {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -116,22 +117,101 @@
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
   font-weight: 500;
-  color: var(--color-text-muted);
+  color: rgba(255, 255, 255, 0.72);
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .navItem:hover {
-  background: var(--color-surface-alt);
-  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
 }
 
-.navItemActive {
-  background: var(--color-primary-subtle);
-  color: var(--color-primary-dark);
+.navItemActive,
+.navItemActive:hover {
+  background: #fff;
+  color: var(--ink);
 }
 
 .navItemActive .navIcon {
-  color: var(--color-primary-dark);
+  color: var(--ink);
+}
+
+.navLabel { flex: 1; min-width: 0; }
+
+/* ---- Grupos del menú ---- */
+.navGroup { display: flex; flex-direction: column; gap: 2px; }
+.navGroup + .navGroup { margin-top: var(--space-3); }
+
+.navGroupTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px var(--space-3);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  text-align: left;
+}
+.navGroupTitle:hover { color: rgba(255, 255, 255, 0.8); }
+
+.navGroupChevron {
+  font-size: 13px;
+  line-height: 1;
+  transition: transform var(--transition-fast);
+}
+.navGroupChevronOpen { transform: rotate(90deg); }
+
+@media (min-width: 769px) {
+  /* Colapsado a íconos: el título del grupo pasa a ser una rayita separadora. */
+  .sidebarCollapsed .navGroupTitle {
+    height: 1px;
+    padding: 0;
+    margin: 0 var(--space-2) var(--space-2);
+    background: rgba(255, 255, 255, 0.14);
+    pointer-events: none;
+  }
+  .sidebarCollapsed .navGroupTitle > * { display: none; }
+}
+
+/* Notebook: menú un poco más angosto y más compacto en alto. */
+@media (min-width: 769px) and (max-width: 1440px) {
+  .sidebar { width: 200px; }
+  .brand { padding-bottom: var(--space-4); }
+  .navItem { padding-top: 6px; padding-bottom: 6px; }
+}
+@media (min-width: 769px) and (max-height: 820px) {
+  .brand { padding-bottom: var(--space-3); }
+  .navItem { padding-top: 5px; padding-bottom: 5px; }
+  .navGroup + .navGroup { margin-top: var(--space-2); }
+}
+
+/* Contador rojo de conversaciones esperando agente */
+.navBadge {
+  flex-shrink: 0;
+  background: var(--st-wait);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--radius-full);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 769px) {
+  .sidebarCollapsed .navBadge {
+    position: absolute;
+    top: 1px;
+    right: 3px;
+    padding: 2px 5px;
+    font-size: 9.5px;
+  }
 }
 
 .navIcon {
@@ -151,8 +231,8 @@
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  border-top: 1px solid var(--color-border);
+  color: rgba(255, 255, 255, 0.6);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
   margin-top: auto;
 }
 
@@ -172,7 +252,7 @@
 
 .agentName {
   font-weight: 500;
-  color: var(--color-text);
+  color: #fff;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -181,23 +261,23 @@
 .logoutBtn {
   font-size: 11px;
   font-weight: 500;
-  color: var(--color-text-muted);
+  color: rgba(255, 255, 255, 0.7);
   background: none;
-  border: 1px solid var(--color-border);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: var(--radius-sm);
   padding: 2px 8px;
   cursor: pointer;
   flex-shrink: 0;
   transition: all var(--transition-fast);
 }
-.logoutBtn:hover { color: var(--color-text); border-color: var(--color-text-muted); }
+.logoutBtn:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
 
 .statusDot {
   width: 7px;
   height: 7px;
   border-radius: var(--radius-full);
-  background: var(--color-success);
-  box-shadow: 0 0 0 2px var(--color-success-bg);
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
   flex-shrink: 0;
 }
 

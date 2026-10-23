@@ -1,0 +1,33 @@
+.bot {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+  background: var(--brand);
+  color: #fff;
+}
+.light { background: #fff; color: var(--brand); }
+
+.bot::before,
+.bot::after {
+  content: '';
+  position: absolute;
+  top: 36%;
+  width: 13%;
+  height: 26%;
+  border-radius: 99px;
+  background: currentColor;
+  animation: botBlink 4s infinite;
+}
+.bot::before { left: 31%; }
+.bot::after { right: 31%; }
+
+@keyframes botBlink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  97% { transform: scaleY(0.15); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bot::before, .bot::after { animation: none; }
+}

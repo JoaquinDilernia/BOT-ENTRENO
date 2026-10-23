@@ -6,12 +6,12 @@ import morgan from 'morgan';
 import webhookRoutes from './routes/webhook.routes.js';
 import knowledgeRoutes from './routes/knowledge.routes.js';
 import conversationRoutes from './routes/conversation.routes.js';
-import configRoutes from './routes/config.routes.js';
+import configRoutes, { brandRouter } from './routes/config.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import testRoutes from './routes/test.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import labelRoutes from './routes/label.routes.js';
-import statsRoutes from './routes/stats.routes.js';
+import statsRoutes, { waitingRouter } from './routes/stats.routes.js';
 import quickReplyRoutes from './routes/quickreply.routes.js';
 import templateRoutes from './routes/template.routes.js';
 import costsRoutes from './routes/costs.routes.js';
@@ -71,6 +71,12 @@ app.use('/api/conversations', requireAuth, conversationRoutes);
 app.use('/api/labels', requireAuth, labelRoutes);
 
 // Requires at least atencion_cliente
+// Livianos y sin datos sensibles: los usa el panel de cualquier rol (operadores
+// incluidos) para el nombre/color de marca y el contador de "esperando".
+// Van antes de /api/config y /api/stats, que exigen atencion_cliente.
+app.use('/api/config/brand',  requireAuth, brandRouter);
+app.use('/api/stats/waiting', requireAuth, waitingRouter);
+
 app.use('/api/knowledge',     requireAuth, requireAtLeastAtencionCliente, knowledgeRoutes);
 app.use('/api/config',        requireAuth, requireAtLeastAtencionCliente, configRoutes);
 // Un operador que atiende una conversación derivada necesita ver el perfil

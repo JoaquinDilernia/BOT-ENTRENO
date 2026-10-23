@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { authFetch, BASE_URL } from '../lib/api';
+import { normalizeHex } from '../lib/brand';
+import { useBrand } from '../contexts/BrandContext';
 import styles from './Config.module.css';
 
 const DAYS_ES = {
@@ -8,6 +10,7 @@ const DAYS_ES = {
 };
 
 export default function Config() {
+  const { updateBrand } = useBrand();
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -29,10 +32,14 @@ export default function Config() {
     e.preventDefault();
     setSaving(true);
     try {
+      const brandColor = normalizeHex(config.brandColor);
+      const body = { ...config, brandColor };
       await authFetch(BASE_URL + '/api/config', {
         method: 'PUT',
-        body: config,
+        body,
       });
+      setConfig(body);
+      updateBrand({ brandColor, botName: body.botName });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } finally {
@@ -76,6 +83,28 @@ export default function Config() {
                 value={config.botName}
                 onChange={(e) => setConfig({ ...config, botName: e.target.value })}
               />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="brandColorText">Color de marca</label>
+              <div className={styles.colorRow}>
+                <input
+                  type="color"
+                  className={styles.colorSwatch}
+                  aria-label="Elegir color de marca"
+                  value={normalizeHex(config.brandColor)}
+                  onChange={(e) => setConfig({ ...config, brandColor: e.target.value })}
+                />
+                <input
+                  id="brandColorText"
+                  className={styles.input}
+                  style={{ maxWidth: 120 }}
+                  value={config.brandColor ?? '#0f766e'}
+                  maxLength={7}
+                  onChange={(e) => setConfig({ ...config, brandColor: e.target.value })}
+                  onBlur={(e) => setConfig({ ...config, brandColor: normalizeHex(e.target.value) })}
+                />
+              </div>
+              <p className={styles.hint}>Se usa en el logo, los botones y el rostro del bot. Si el valor no es válido se usa el verde por defecto.</p>
             </div>
             <div className={styles.field}>
               <label className={styles.label}>Personalidad del bot</label>

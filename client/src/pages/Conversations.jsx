@@ -3,18 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch, BASE_URL } from '../lib/api';
 import { useNotifications } from '../hooks/useNotifications.js';
+import { useBrand } from '../contexts/BrandContext';
+import BotFace from '../components/ui/BotFace';
+import { waitLevel, avatarColor, pillFor, resolveAssignee, initials, listTime, buildTimeline } from '../lib/conversationView';
 import styles from './Conversations.module.css';
 
-
-const STATUS_CONFIG = {
-  bot:          { label: 'Bot activo',    cls: 'bot' },
-  escalated:    { label: 'Con agente',    cls: 'escalated' },
-  bot_archived: { label: 'Archivado Bot', cls: 'bot_archived' },
-  resolved:     { label: 'Cerrado',       cls: 'resolved' },
-  // Legacy
-  urgent:       { label: 'Urgente',       cls: 'urgent' },
-  waiting:      { label: 'En espera',     cls: 'waiting' },
-};
 
 const CHANNEL_CONFIG = {
   whatsapp:  { label: 'WhatsApp', cls: 'wpp' },
@@ -22,8 +15,8 @@ const CHANNEL_CONFIG = {
 };
 
 const FILTERS = [
-  // Todo lo que el bot derivó a humanos, tenga o no agente asignado — sin esto
-  // las derivaciones sin asignar no aparecían en ningún filtro.
+  { value: 'waiting',       label: 'Esperando' },
+  // Todo lo que el bot derivó a humanos, tenga o no agente asignado.
   { value: 'escalated',     label: 'Derivados',  minRole: 'atencion_cliente' },
   { value: 'bot',           label: 'Bot' },
   { value: 'mine',          label: 'Mis casos' },
@@ -31,23 +24,33 @@ const FILTERS = [
   { value: 'archived',      label: 'Archivados' },
 ];
 
-const SLA_WARN_MS  = 15 * 60 * 1000;  // 15 min → amarillo
-const SLA_ALERT_MS = 30 * 60 * 1000;  // 30 min → naranja
-const SLA_CRIT_MS  = 60 * 60 * 1000;  // 60 min → rojo
-
-function StatusChip({ status }) {
-  const cfg = STATUS_CONFIG[status] ?? { label: status, cls: 'bot' };
-  return <span className={`${styles.chip} ${styles['chip_' + cfg.cls]}`}>{cfg.label}</span>;
-}
+const COMPOSER_MAX_PX = 120;
 
 function ChannelBadge({ channel }) {
   const cfg = CHANNEL_CONFIG[channel] ?? { label: channel, cls: 'wpp' };
   return <span className={`${styles.badge} ${styles['badge_' + cfg.cls]}`}>{cfg.label}</span>;
 }
 
-function AgentBadge({ assignedTo, nameMap = {} }) {
-  if (!assignedTo) return null;
-  return <span className={styles.agentBadge}>{nameMap[assignedTo] ?? assignedTo}</span>;
+// Avatar redondo de color estable con el punto del canal (WhatsApp / Instagram).
+function ConvAvatar({ conv, size }) {
+  const seed = conv.contactId || conv.id;
+  return (
+    <span
+      className={styles.avatar}
+      style={{ background: avatarColor(seed), ...(size ? { width: size, height: size } : null) }}
+      aria-hidden="true"
+    >
+      {initials(conv.contactName || conv.contactId)}
+      <span className={`${styles.chanDot} ${conv.channel === 'instagram' ? styles.chanDotIg : ''}`} />
+    </span>
+  );
+}
+
+function contactSubtitle(conv) {
+  const channel = CHANNEL_CONFIG[conv.channel]?.label ?? conv.channel ?? 'WhatsApp';
+  const id = conv.contactId ?? '';
+  const shown = conv.channel !== 'instagram' && /^\d+$/.test(id) ? `+${id}` : id;
+  return shown ? `${shown} · ${channel}` : channel;
 }
 
 function LabelChip({ label, labelMap, onRemove }) {
@@ -104,6 +107,15 @@ function formatDate(ts) {
   return d.toLocaleDateString('es-AR');
 }
 
+// "mar 2026" — para el "Cliente desde" del perfil.
+function formatMonthYear(ts) {
+  const d = tsToDate(ts);
+  if (!d) return '';
+  return d.toLocaleDateString('es-AR', { month: 'short', year: 'numeric' }).replace('.', '');
+}
+
+const EMOJIS = ['😀', '😂', '😊', '😍', '🙏', '👍', '👌', '👋', '🙌', '👏', '💪', '🎉', '❤️', '🔥', '✅', '❌', '⚠️', '📦', '🚚', '💳', '📞', '⏰', '😕', '😉'];
+
 function formatRecordTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
   const s = (totalSeconds % 60).toString().padStart(2, '0');
@@ -123,13 +135,6 @@ function getSlaWaitMs(conv) {
   const since = conv.waitingSince ?? conv.lastClientMessageAt;
   const d = tsToDate(since);
   return d ? Math.max(0, Date.now() - d.getTime()) : 0;
-}
-
-function slaColor(waitMs) {
-  if (waitMs >= SLA_CRIT_MS)  return '#ef4444';
-  if (waitMs >= SLA_ALERT_MS) return '#f97316';
-  if (waitMs >= SLA_WARN_MS)  return '#eab308';
-  return null;
 }
 
 // Delivery status icon for agent messages
@@ -285,11 +290,12 @@ function MessageBubble({
   searchQuery = '', isCurrentMatch = false, rootRef,
   selectMode = false, isSelected = false, onToggleSelect,
 }) {
+  const { botName } = useBrand();
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
   // Mensajes viejos no tienen `sentBy` (se agregó después) — quedan mostrando
   // "Agente" genérico en vez de romper o mostrar un nombre incorrecto.
-  const senderLabel = isUser ? 'Cliente' : isAdmin ? (nameMap[msg.sentBy] ?? 'Agente') : 'Bot';
+  const agentLabel = nameMap[msg.sentBy] ?? 'Agente';
   const token = localStorage.getItem('bot_token');
   // WhatsApp → proxy del backend por mediaId; Instagram → URL directa del CDN.
   const mediaProxyUrl = msg.mediaId
@@ -334,6 +340,11 @@ function MessageBubble({
       onClick={selectMode && forwardable ? onToggleSelect : undefined}
     >
       <div className={`${styles.msgBubble} ${isError ? styles.msgBubbleError : ''} ${isCurrentMatch ? styles.msgBubbleMatch : ''}`}>
+        {/* Firma: el bot con su carita, los agentes con su nombre */}
+        {msg.role === 'assistant' && (
+          <span className={`${styles.msgBy} ${styles.msgByBot}`}><BotFace size={14} />{botName} · bot</span>
+        )}
+        {isAdmin && <span className={`${styles.msgBy} ${styles.msgByAgent}`}>{agentLabel}</span>}
         {msg.forwarded && <span className={styles.msgForwardedTag}>↪ Reenviado</span>}
         {msg.replyTo && (
           <div className={styles.msgReplyQuote}>
@@ -423,14 +434,17 @@ function MessageBubble({
             ↻ Reintentar
           </button>
         )}
+        {(msg.timestamp || isAdmin) && (
+          <span className={styles.msgTime} title={msg.timestamp ? formatDateTime(msg.timestamp) : undefined}>
+            {msg.timestamp ? formatTime(msg.timestamp) : ''}
+            {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} msgError={msg.msgError} />}
+          </span>
+        )}
       </div>
       <span className={styles.msgMeta}>
         {selectMode && forwardable && (
           <span className={`${styles.msgCheck} ${isSelected ? styles.msgCheckOn : ''}`}>{isSelected ? '✓' : ''}</span>
         )}
-        {senderLabel}
-        {msg.timestamp ? ` · ${formatDateTime(msg.timestamp)}` : ''}
-        {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} msgError={msg.msgError} />}
         {onQuote && msg.waMsgId && (
           <button
             type="button"
@@ -596,64 +610,62 @@ function ForwardModal({ items, conversations, onClose, onDone }) {
   );
 }
 
-function ConvItem({ conv, active, onClick, labelMap, nameMap = {} }) {
+const PILL_TONE_CLS = { bot: 'pillBot', wait: 'pillWait', agent: 'pillAgent', ok: 'pillOk', muted: 'pillMuted' };
+
+function ConvItem({ conv, active, onClick, pill }) {
   const isUrgent = conv.urgent;
   const pendingMsgs = conv.consecutiveClientMessages ?? 0;
   const isInsistent = pendingMsgs >= 3;
   const isWaiting = pendingMsgs > 0 && conv.lastClientMessageAt;
   const waitMs = getSlaWaitMs(conv);
-  const slaBadgeColor = slaColor(waitMs);
+  // Contador de espera: naranja desde 5 min, rojo desde 15 (solo si espera a un agente).
+  const level = waitMs > 0 ? waitLevel(waitMs / 60000) : 'none';
+  const firstLabel = conv.labels?.[0];
+  const moreLabels = (conv.labels?.length ?? 0) - 1;
 
   return (
     <button
       className={`${styles.item} ${active ? styles.itemActive : ''}`}
       onClick={onClick}
     >
-      <div className={styles.itemTop}>
-        <span className={styles.itemName}>{conv.contactName || conv.contactId}</span>
-        <div className={styles.itemTopRight}>
+      <ConvAvatar conv={conv} />
+      <div className={styles.itemBody}>
+        <div className={styles.itemTop}>
+          <span className={styles.itemName}>{conv.contactName || conv.contactId}</span>
+          {isWaiting ? (
+            <span
+              className={`${styles.itemTime} ${level === 'warn' ? styles.itemTimeWarn : ''} ${level === 'late' ? styles.itemTimeLate : ''}`}
+              title="Tiempo esperando respuesta de agente"
+            >
+              espera {formatAge(conv.waitingSince ?? conv.lastClientMessageAt)}
+            </span>
+          ) : (
+            conv.updatedAt && <span className={styles.itemTime} title={formatDateTime(conv.updatedAt)}>{listTime(conv.updatedAt)}</span>
+          )}
+        </div>
+        <div className={styles.itemMid}>
+          <p className={styles.itemPreview}>{conv.lastMessage || ' '}</p>
           <div className={styles.itemIndicators}>
             {conv.critical && <span className={styles.criticalBadge} title="Crítico — 4+ mensajes sin respuesta">🔴</span>}
             {isUrgent && <span className={styles.urgentFlagBadge} title="Urgente">⚡</span>}
             {isInsistent && <span className={styles.insistentBadge} title="Cliente insistente — escribió varias veces sin respuesta">⚠</span>}
-            {isWaiting && (
-              <span
-                className={styles.waitTimeBadge}
-                title="Tiempo esperando respuesta de agente"
-                style={slaBadgeColor ? { background: slaBadgeColor + '22', color: slaBadgeColor, borderColor: slaBadgeColor + '66' } : undefined}
-              >
-                ⏳ {formatAge(conv.waitingSince ?? conv.lastClientMessageAt)}
-              </span>
-            )}
             {pendingMsgs > 0 && (
               <span className={styles.pendingMsgsBadge} title={`${pendingMsgs} mensaje${pendingMsgs > 1 ? 's' : ''} sin respuesta`}>
                 {pendingMsgs} msg{pendingMsgs > 1 ? 's' : ''}
               </span>
             )}
+            {conv.unread > 0 && <span className={styles.itemUnread}>{conv.unread}</span>}
           </div>
-          {conv.updatedAt && <span className={styles.itemAge}>{formatAge(conv.updatedAt)}</span>}
-          {conv.unread > 0 && <span className={styles.itemUnread}>{conv.unread}</span>}
         </div>
-      </div>
-      <div className={styles.itemBottom}>
-        <StatusChip status={conv.status || 'bot'} />
-        <ChannelBadge channel={conv.channel} />
-        <AgentBadge assignedTo={conv.assignedTo} nameMap={nameMap} />
-      </div>
-      {conv.lastMessage && <p className={styles.itemPreview}>{conv.lastMessage}</p>}
-      {conv.labels?.length > 0 && (
-        <div className={styles.itemLabels}>
-          {conv.labels.map(l => (
-            <span
-              key={l}
-              className={styles.labelChipSmall}
-              style={{ background: (labelMap[l] ?? '#6b7280') + '22', color: labelMap[l] ?? '#6b7280', borderColor: (labelMap[l] ?? '#6b7280') + '55' }}
-            >
-              {l}
+        <div className={styles.itemWho}>
+          <span className={`${styles.pill} ${styles[PILL_TONE_CLS[pill.tone]]}`}>{pill.text}</span>
+          {firstLabel && (
+            <span className={`${styles.pill} ${styles.pillLabel}`} title={conv.labels.join(', ')}>
+              {firstLabel}{moreLabels > 0 ? ` +${moreLabels}` : ''}
             </span>
-          ))}
+          )}
         </div>
-      )}
+      </div>
     </button>
   );
 }
@@ -702,6 +714,7 @@ export default function Conversations() {
   const [labelDropOpen, setLabelDropOpen] = useState(false);
   const [quickReplies, setQuickReplies] = useState([]);
   const [qrOpen, setQrOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [showNewConvModal, setShowNewConvModal] = useState(false);
   const [newPhone, setNewPhone] = useState('');
@@ -738,14 +751,28 @@ export default function Conversations() {
   const pollMsgRef = useRef(null);
   const selectedIdRef = useRef(null);
   const mediaInputRef = useRef(null);
+  const replyInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const mediaStreamRef = useRef(null);
   const recordTimerRef = useRef(null);
   const appliedDeepLinkRef = useRef(false);
 
+  // Composer que crece con el texto (hasta 120 px). Corre también cuando el
+  // valor cambia por código (respuesta rápida, limpiar después de enviar) y
+  // cuando el textarea se vuelve a montar. Reemplaza a field-sizing, que
+  // Safari/iOS y Firefox no soportan.
+  useLayoutEffect(() => {
+    const el = replyInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
+  }, [reply, selected?.id, selected?.humanMode, recording, recordedAudio]);
+
   const labelMap = Object.fromEntries(allLabels.map(l => [l.name, l.color]));
   const myId = agent?.id;
+  const { botName } = useBrand();
+  const pillOf = (c) => pillFor(c, { botName, areas, nameMap });
 
   useNotifications(conversations);
 
@@ -838,6 +865,7 @@ export default function Conversations() {
     markRead(selected.id);
     setLabelDropOpen(false);
     setQrOpen(false);
+    setEmojiOpen(false);
     // Reset window state when switching conversations
     setApiWindowError(false);
     setTemplateSendOpen(false);
@@ -887,6 +915,25 @@ export default function Conversations() {
       el.removeEventListener('loadedmetadata', onMediaLoad, true);
     };
   }, [selected?.id]);
+
+  // Mensajes + separadores de día + avisos de traspaso. Derivado (puro) del
+  // array de mensajes: cada poll de 5 s lo recalcula desde cero, así que no
+  // puede acumular avisos duplicados.
+  const timeline = useMemo(() => buildTimeline(messages, { botName, nameMap }), [messages, botName, nameMap]);
+
+  // Insertar un emoji donde está el cursor del composer.
+  function insertEmoji(emoji) {
+    const el = replyInputRef.current;
+    const start = el?.selectionStart ?? reply.length;
+    const end = el?.selectionEnd ?? reply.length;
+    setReply(reply.slice(0, start) + emoji + reply.slice(end));
+    setEmojiOpen(false);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(start + emoji.length, start + emoji.length);
+    });
+  }
 
   // ---- Buscador dentro del chat ----
   const chatSearchMatches = useMemo(() => {
@@ -1500,9 +1547,13 @@ export default function Conversations() {
           if (isConvArchived) return false;
           if (!convUrgent) return false;
         } else if (filter === 'waiting') {
+          // Derivadas (a un área o sin asignar) que todavía no tomó ningún agente.
+          if (isConvArchived) return false;
+          if (pillOf(c).tone !== 'wait') return false;
+        } else if (filter === 'teams') {
           if (isConvArchived) return false;
           if (!convHuman) return false;
-          if (getSlaWaitMs(c) < 60 * 60 * 1000) return false;
+          if (teamsAreaFilter && c.assignedTo !== teamsAreaFilter) return false;
         }
 
         if (labelFilter && !(c.labels ?? []).includes(labelFilter)) return false;
@@ -1512,6 +1563,13 @@ export default function Conversations() {
   if (filter === 'waiting') {
     filtered.sort((a, b) => getSlaWaitMs(b) - getSlaWaitMs(a));
   }
+
+  const waitingCount = conversations.filter(c => {
+    const s = c.status || 'bot';
+    return s !== 'bot_archived' && s !== 'resolved' && pillOf(c).tone === 'wait';
+  }).length;
+  const selectedAssignee = selected ? resolveAssignee(selected.assignedTo, { areas, nameMap }) : null;
+  const selectedPill = selected ? pillOf(selected) : null;
 
   return (
     <div className={styles.page}>
@@ -1525,11 +1583,11 @@ export default function Conversations() {
           <input
             className={styles.searchInput}
             type="search"
-            placeholder="Buscar contacto..."
+            placeholder="Buscar por nombre o teléfono"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
-          <div className={styles.chips}>
+          <div className={styles.chips} role="tablist" aria-label="Filtros">
             {FILTERS.filter(f => {
               if (!f.minRole) return true;
               if (f.minRole === 'atencion_cliente') return agent?.role === 'admin' || agent?.role === 'atencion_cliente';
@@ -1540,20 +1598,38 @@ export default function Conversations() {
                 key={f.value}
                 onClick={() => setFilter(f.value)}
                 className={`${styles.filterChip} ${filter === f.value ? styles.filterChipActive : ''}`}
+                role="tab"
+                aria-selected={filter === f.value}
               >
                 {f.label}
+                {f.value === 'waiting' && waitingCount > 0 && (
+                  <em className={styles.filterChipCount}>{waitingCount > 99 ? '99+' : waitingCount}</em>
+                )}
               </button>
             ))}
+            {allLabels.length > 0 && (
+              <select
+                className={`${styles.filterChip} ${styles.chipSelect} ${labelFilter ? styles.filterChipActive : ''}`}
+                value={labelFilter ?? ''}
+                onChange={e => setLabelFilter(e.target.value || null)}
+                title="Filtrar por etiqueta"
+              >
+                <option value="">Etiqueta ▾</option>
+                {allLabels.map(l => (
+                  <option key={l.id} value={l.name}>{l.name}</option>
+                ))}
+              </select>
+            )}
           </div>
-          {allLabels.length > 0 && (
+          {filter === 'teams' && areas.length > 0 && (
             <select
               className={styles.labelSelect}
-              value={labelFilter ?? ''}
-              onChange={e => setLabelFilter(e.target.value || null)}
+              value={teamsAreaFilter}
+              onChange={e => setTeamsAreaFilter(e.target.value)}
             >
-              <option value="">Todas las etiquetas</option>
-              {allLabels.map(l => (
-                <option key={l.id} value={l.name}>{l.name}</option>
+              <option value="">Todas las áreas</option>
+              {areas.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           )}
@@ -1575,8 +1651,7 @@ export default function Conversations() {
                 conv={c}
                 active={selected?.id === c.id}
                 onClick={() => setSelected(c)}
-                labelMap={labelMap}
-                nameMap={nameMap}
+                pill={pillOf(c)}
               />
             ))
           )}
@@ -1593,7 +1668,6 @@ export default function Conversations() {
         ) : (
           <>
             <div className={styles.threadHeader}>
-              {/* Row 1: name + close/reopen */}
               <div className={styles.threadHeaderTop}>
                 <button
                   type="button"
@@ -1603,149 +1677,161 @@ export default function Conversations() {
                 >
                   ←
                 </button>
-                <span className={styles.threadName}>
-                  {selected.contactName || selected.contactId}
-                  {isUrgentFlag && <span style={{ marginLeft: 6, fontSize: 14 }}>⚡</span>}
-                </span>
+                <ConvAvatar conv={selected} size={38} />
+                <div className={styles.threadTitle}>
+                  <span className={styles.threadName}>
+                    {selected.contactName || selected.contactId}
+                    {isUrgentFlag && <span className={styles.threadUrgentMark} title="Urgente">⚡</span>}
+                  </span>
+                  <span className={styles.threadSub}>{contactSubtitle(selected)}</span>
+                </div>
                 <div className={styles.threadActions}>
                   <button
                     type="button"
-                    className={`${styles.chatSearchToggle} ${chatSearchOpen ? styles.chatSearchToggleOn : ''}`}
+                    className={`${styles.iconBtn} ${chatSearchOpen ? styles.iconBtnOn : ''}`}
                     onClick={() => (chatSearchOpen ? closeChatSearch() : setChatSearchOpen(true))}
                     title="Buscar en este chat"
                   >
                     🔍
                   </button>
+                  {!isArchived && agentsList.length > 0 && (
+                    <span className={styles.deriveWrap}>
+                      {/* En mobile el select queda invisible encima de este ícono */}
+                      <span className={`${styles.iconBtn} ${styles.deriveIcon}`} aria-hidden="true">↪</span>
+                      <select
+                        className={styles.deriveSelect}
+                        value=""
+                        onChange={e => { if (e.target.value) dispatch('assign_to', { assignedTo: e.target.value }); }}
+                        disabled={updating}
+                        title="Derivar a agente específico"
+                        aria-label="Derivar a agente específico"
+                      >
+                        <option value="">↪ Derivar…</option>
+                        {agentsList.map(a => (
+                          <option key={a.id} value={a.email}>{a.name}</option>
+                        ))}
+                      </select>
+                    </span>
+                  )}
+                  {!isArchived && (
+                    <button
+                      type="button"
+                      className={`${styles.iconBtn} ${isUrgentFlag ? styles.iconBtnUrgent : ''}`}
+                      onClick={() => dispatch(isUrgentFlag ? 'unset_urgent' : 'set_urgent')}
+                      disabled={updating}
+                      title={isUrgentFlag ? 'Quitar urgente' : 'Marcar como urgente'}
+                      aria-pressed={isUrgentFlag}
+                    >
+                      ⚡
+                    </button>
+                  )}
+                  {isArchived ? (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      onClick={() => dispatch('to_bot')}
+                      disabled={updating}
+                      title="Reabrir conversación"
+                    >
+                      ↩
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      onClick={() => dispatch('bot_archive')}
+                      disabled={updating}
+                      title="Archivar conversación"
+                    >
+                      ✓
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className={styles.profileToggleBtn}
+                    className={`${styles.iconBtn} ${styles.profileToggleBtn}`}
                     onClick={() => setShowMobileProfile(v => !v)}
                     title="Ver perfil del cliente"
                   >
                     👤
                   </button>
-                  {isArchived ? (
-                    <button className={`${styles.actionBtn} ${styles.actionReopen}`} onClick={() => dispatch('to_bot')} disabled={updating}>
-                      ↩ Reabrir
-                    </button>
-                  ) : (
-                    <button
-                      className={`${styles.actionBtn} ${styles.actionResolve}`}
-                      onClick={() => dispatch('bot_archive')}
-                      disabled={updating}
-                      title="Archivar conversación"
-                    >
-                      ✓ Archivar
-                    </button>
-                  )}
                 </div>
               </div>
 
-              {/* Row 2: badges + dispatch actions */}
-              <div className={styles.threadHeaderBottom}>
-                <div className={styles.threadHeaderBadges}>
-                  <ChannelBadge channel={selected.channel} />
-                  <StatusChip status={currentStatus} />
-                  {selected.assignedTo && <AgentBadge assignedTo={selected.assignedTo} nameMap={nameMap} />}
-                </div>
-
+              <div className={styles.labelsRow}>
+                {(selected.labels ?? []).map(l => (
+                  <LabelChip key={l} label={l} labelMap={labelMap} onRemove={!isArchived ? removeLabel : null} />
+                ))}
                 {!isArchived && (
-                  <div className={styles.dispatchActions}>
+                  <div className={styles.labelAddWrap}>
                     <button
-                      className={`${styles.dispatchBtn} ${styles.dispatchBotBtn} ${!isHuman && currentStatus === 'bot' ? styles.dispatchBtnActive : ''}`}
-                      onClick={() => dispatch('to_bot')}
-                      disabled={updating}
-                      title="Enviar al Bot"
+                      className={styles.labelAddBtn}
+                      onClick={() => setLabelDropOpen(v => !v)}
+                      title="Agregar etiqueta"
                     >
-                      🤖 Bot
+                      + Etiqueta
                     </button>
-
-                    {/* Take over button: visible when bot is handling the conv */}
-                    {!isHuman && currentStatus === 'bot' && (
-                      <button
-                        className={styles.takeOverBtn}
-                        onClick={() => dispatch('take_over', { agentId: myId })}
-                        disabled={updating}
-                        title="Tomar esta conversación — el bot deja de responder"
-                      >
-                        ✋ Tomar
-                      </button>
-                    )}
-
-                    {agentsList.length > 0 && (
-                      <select
-                        className={styles.agentSelect}
-                        value=""
-                        onChange={e => { if (e.target.value) dispatch('assign_to', { assignedTo: e.target.value }); }}
-                        disabled={updating}
-                        title="Derivar a agente específico"
-                      >
-                        <option value="">→ Agente...</option>
-                        {agentsList.map(a => (
-                          <option key={a.id} value={a.email}>{a.name}</option>
+                    {labelDropOpen && availableToAdd.length > 0 && (
+                      <div className={styles.labelDropdown}>
+                        {availableToAdd.map(l => (
+                          <button
+                            key={l.id}
+                            className={styles.labelDropItem}
+                            onClick={() => addLabel(l.name)}
+                          >
+                            <span className={styles.labelDropDot} style={{ background: l.color }} />
+                            {l.name}
+                          </button>
                         ))}
-                      </select>
+                      </div>
                     )}
-
-                    {/* Urgent toggle: always visible, toggles the flag */}
-                    {isUrgentFlag ? (
-                      <button
-                        className={`${styles.dispatchBtn} ${styles.dispatchUnurgentBtn}`}
-                        onClick={() => dispatch('unset_urgent')}
-                        disabled={updating}
-                        title="Quitar urgente"
-                      >
-                        ⚡ Quitar urgente
-                      </button>
-                    ) : (
-                      <button
-                        className={`${styles.dispatchBtn} ${styles.dispatchUrgentBtn}`}
-                        onClick={() => dispatch('set_urgent')}
-                        disabled={updating}
-                        title="Marcar como urgente"
-                      >
-                        ⚡ Urgente
-                      </button>
+                    {labelDropOpen && availableToAdd.length === 0 && (
+                      <div className={styles.labelDropdown}>
+                        <span className={styles.labelDropEmpty}>Sin etiquetas disponibles</span>
+                      </div>
                     )}
                   </div>
                 )}
-
-                <div className={styles.labelsRow}>
-                  {(selected.labels ?? []).map(l => (
-                    <LabelChip key={l} label={l} labelMap={labelMap} onRemove={!isArchived ? removeLabel : null} />
-                  ))}
-                  {!isArchived && (
-                    <div className={styles.labelAddWrap}>
-                      <button
-                        className={styles.labelAddBtn}
-                        onClick={() => setLabelDropOpen(v => !v)}
-                        title="Agregar etiqueta"
-                      >
-                        + Etiqueta
-                      </button>
-                      {labelDropOpen && availableToAdd.length > 0 && (
-                        <div className={styles.labelDropdown}>
-                          {availableToAdd.map(l => (
-                            <button
-                              key={l.id}
-                              className={styles.labelDropItem}
-                              onClick={() => addLabel(l.name)}
-                            >
-                              <span className={styles.labelDropDot} style={{ background: l.color }} />
-                              {l.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {labelDropOpen && availableToAdd.length === 0 && (
-                        <div className={styles.labelDropdown}>
-                          <span className={styles.labelDropEmpty}>Sin etiquetas disponibles</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
               </div>
+            </div>
+
+            {/* ---- Píldora de estado: quién atiende ---- */}
+            <div className={styles.statePillWrap}>
+              {isArchived ? (
+                <div className={`${styles.statePill} ${styles.statePillMuted}`}>
+                  <span>{selectedPill.text === 'Resuelta' ? 'Conversación resuelta' : 'Conversación archivada'}</span>
+                </div>
+              ) : selectedPill.tone === 'bot' ? (
+                <div className={styles.statePill}>
+                  <BotFace size={22} />
+                  <span>Responde <b>{botName}</b></span>
+                  <button
+                    type="button"
+                    className={styles.statePillBtn}
+                    onClick={() => dispatch('take_over', { agentId: myId })}
+                    disabled={updating}
+                    title="Tomar esta conversación — el bot deja de responder"
+                  >
+                    Intervenir
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.statePill}>
+                  {selectedPill.tone === 'agent' ? (
+                    <span>Lo atiende <b>{selectedAssignee.agentName}</b> · {botName} está en pausa</span>
+                  ) : (
+                    <span><b className={styles.statePillWait}>{selectedPill.text}</b> · {botName} está en pausa</span>
+                  )}
+                  <button
+                    type="button"
+                    className={styles.statePillBtn}
+                    onClick={() => dispatch('to_bot')}
+                    disabled={updating}
+                    title="Enviar al Bot"
+                  >
+                    Devolver a {botName}
+                  </button>
+                </div>
+              )}
             </div>
 
             {chatSearchOpen && (
@@ -1783,7 +1869,14 @@ export default function Conversations() {
               {messages.length === 0 ? (
                 <p className={styles.noMessages}>{messagesLoading ? 'Cargando mensajes…' : 'Sin mensajes aún.'}</p>
               ) : (
-                messages.map((msg, i) => {
+                timeline.map(item => {
+                  if (item.kind === 'day') {
+                    return <div key={item.key} className={styles.daySep}>{item.label}</div>;
+                  }
+                  if (item.kind === 'handoff') {
+                    return <div key={item.key} className={styles.handoffNotice}>{item.text}</div>;
+                  }
+                  const { msg, index: i } = item;
                   const canRetry = msg.role === 'admin' && msg.msgStatus === 'error'
                     && msg.content?.trim() && !msg.mediaType
                     && !msg.content.startsWith('[Plantilla:');
@@ -2032,63 +2125,71 @@ export default function Conversations() {
                     </button>
                   </div>
                 ) : (
+                <>
+                {quickReplies.length > 0 && (
+                  /* ---- Respuestas rápidas: 3 a mano + el selector completo ---- */
+                  <div className={styles.qrRow}>
+                    {quickReplies.slice(0, 3).map(qr => (
+                      <button
+                        type="button"
+                        key={qr.id}
+                        className={styles.qrChip}
+                        onClick={() => setReply(qr.text)}
+                        title={qr.text}
+                      >
+                        ⚡ {qr.title || qr.shortcut}
+                      </button>
+                    ))}
+                    <div className={styles.qrWrap}>
+                      <button
+                        type="button"
+                        className={styles.qrBtn}
+                        onClick={() => setQrOpen(v => !v)}
+                        title="Respuestas rápidas"
+                        aria-expanded={qrOpen}
+                      >
+                        ⚡ Todas ▾
+                      </button>
+                      {qrOpen && (
+                        <div className={styles.qrDropdown}>
+                          {quickReplies.map(qr => (
+                            <button
+                              type="button"
+                              key={qr.id}
+                              className={styles.qrDropItem}
+                              onClick={() => { setReply(qr.text); setQrOpen(false); }}
+                            >
+                              <span className={styles.qrDropTitle}>
+                                {qr.shortcut && <code className={styles.qrDropShortcut}>/{qr.shortcut}</code>}
+                                {qr.title || qr.shortcut}
+                              </span>
+                              <span className={styles.qrDropText}>{qr.text}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className={styles.replyRow}>
-                  <div className={styles.replyInputWrap}>
-                    {slashSuggestions.length > 0 && (
-                      <div className={styles.slashDropdown}>
-                        {slashSuggestions.map(qr => (
-                          <button
-                            type="button"
-                            key={qr.id}
-                            className={styles.slashDropItem}
-                            onClick={() => setReply(qr.text)}
-                          >
-                            <span className={styles.slashDropShortcut}>/{qr.shortcut}</span>
-                            <span className={styles.slashDropTitle}>{qr.title || qr.shortcut}</span>
+                  <div className={styles.emojiWrap}>
+                    <button
+                      type="button"
+                      className={styles.mediaBtn}
+                      onClick={() => setEmojiOpen(v => !v)}
+                      disabled={sending}
+                      title="Emojis"
+                      aria-expanded={emojiOpen}
+                    >
+                      😊
+                    </button>
+                    {emojiOpen && (
+                      <div className={styles.emojiPicker}>
+                        {EMOJIS.map(em => (
+                          <button type="button" key={em} className={styles.emojiItem} onClick={() => insertEmoji(em)}>
+                            {em}
                           </button>
                         ))}
-                      </div>
-                    )}
-                    <textarea
-                      className={styles.replyInput}
-                      rows={2}
-                      placeholder="Escribí tu respuesta... (Enter para enviar)"
-                      value={reply}
-                      onChange={e => setReply(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(e); } }}
-                      onPaste={handlePaste}
-                      disabled={sending}
-                      spellCheck="true"
-                      lang="es"
-                    />
-                    {quickReplies.length > 0 && (
-                      <div className={styles.qrWrap}>
-                        <button
-                          type="button"
-                          className={styles.qrBtn}
-                          onClick={() => setQrOpen(v => !v)}
-                          title="Respuestas rápidas"
-                        >
-                          ⚡
-                        </button>
-                        {qrOpen && (
-                          <div className={styles.qrDropdown}>
-                            {quickReplies.map(qr => (
-                              <button
-                                type="button"
-                                key={qr.id}
-                                className={styles.qrDropItem}
-                                onClick={() => { setReply(qr.text); setQrOpen(false); }}
-                              >
-                                <span className={styles.qrDropTitle}>
-                                  {qr.shortcut && <code className={styles.qrDropShortcut}>/{qr.shortcut}</code>}
-                                  {qr.title || qr.shortcut}
-                                </span>
-                                <span className={styles.qrDropText}>{qr.text}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
@@ -2108,6 +2209,36 @@ export default function Conversations() {
                   >
                     📎
                   </button>
+                  <div className={styles.replyInputWrap}>
+                    {slashSuggestions.length > 0 && (
+                      <div className={styles.slashDropdown}>
+                        {slashSuggestions.map(qr => (
+                          <button
+                            type="button"
+                            key={qr.id}
+                            className={styles.slashDropItem}
+                            onClick={() => setReply(qr.text)}
+                          >
+                            <span className={styles.slashDropShortcut}>/{qr.shortcut}</span>
+                            <span className={styles.slashDropTitle}>{qr.title || qr.shortcut}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      ref={replyInputRef}
+                      className={styles.replyInput}
+                      rows={1}
+                      placeholder="Escribí un mensaje (Enter para enviar)"
+                      value={reply}
+                      onChange={e => setReply(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(e); } }}
+                      onPaste={handlePaste}
+                      disabled={sending}
+                      spellCheck="true"
+                      lang="es"
+                    />
+                  </div>
                   <button
                     type="button"
                     className={styles.micBtn}
@@ -2117,17 +2248,24 @@ export default function Conversations() {
                   >
                     🎙️
                   </button>
-                  <button type="submit" className={styles.replyBtn} disabled={sending || !reply.trim()}>
-                    {sending ? '...' : 'Enviar'}
+                  <button
+                    type="submit"
+                    className={styles.sendBtn}
+                    disabled={sending || !reply.trim()}
+                    title="Enviar"
+                    aria-label="Enviar"
+                  >
+                    {sending ? '…' : '➤'}
                   </button>
                 </div>
+                </>
                 )}
               </form>
             ) : (
               /* ---- Bot is handling the conversation ---- */
               <div className={styles.botFooter}>
                 <span className={styles.botFooterDot} />
-                <span className={styles.botFooterText}>El bot está respondiendo automáticamente</span>
+                <span className={styles.botFooterText}>{botName} está respondiendo automáticamente</span>
                 <button
                   className={styles.takeOverBtn}
                   onClick={() => dispatch('take_over', { agentId: myId })}
@@ -2171,6 +2309,25 @@ export default function Conversations() {
             <span className={styles.profileTitle}>Perfil del cliente</span>
           </div>
 
+          <div className={styles.profileHero}>
+            <ConvAvatar conv={selected} size={64} />
+            <span className={styles.profileHeroName}>{customer?.contactName || selected.contactName || selected.contactId}</span>
+            {customer?.firstContactAt && (
+              <span className={styles.profileHeroSince}>Cliente desde {formatMonthYear(customer.firstContactAt)}</span>
+            )}
+          </div>
+
+          {(selected.labels ?? []).length > 0 && (
+            <div className={styles.profileSection}>
+              <div className={styles.profileSectionTitle}>Etiquetas</div>
+              <div className={styles.profileLabels}>
+                {selected.labels.map(l => (
+                  <LabelChip key={l} label={l} labelMap={labelMap} onRemove={!isArchived ? removeLabel : null} />
+                ))}
+              </div>
+            </div>
+          )}
+
           {customer ? (
             <>
               <div className={styles.profileSection}>
@@ -2210,7 +2367,7 @@ export default function Conversations() {
                   </button>
                 </div>
                 {summary ? (
-                  <>
+                  <div className={styles.summaryBox}>
                     <p className={styles.summaryText}>{summary.text}</p>
                     <div className={styles.summaryMetrics}>
                       <span className={styles.metricChip}>💬 {summary.metrics?.totalMessages ?? '?'} msgs</span>
@@ -2229,7 +2386,7 @@ export default function Conversations() {
                         Generado {formatDate(summary.generatedAt)}
                       </span>
                     )}
-                  </>
+                  </div>
                 ) : (
                   <p className={styles.profileEmpty}>
                     {summaryGenerating ? 'Generando resumen...' : 'Sin resumen. Hacé click en "Generar".'}

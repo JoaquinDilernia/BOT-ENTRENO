@@ -1,225 +1,291 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authFetch, BASE_URL } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useBrand } from '../contexts/BrandContext';
+import BotFace from '../components/ui/BotFace';
+import Skeleton from '../components/ui/Skeleton';
+import { useCountUp } from '../hooks/useCountUp';
+import { useFirstLoad } from '../hooks/useFirstLoad';
+import { waitLevel, avatarColor, initials } from '../lib/conversationView';
+import { tediSummary, waitingQueue, activityFeed, kpiDelta, fmt } from '../lib/home';
 import styles from './Dashboard.module.css';
 
-function fmtWaitTime(min) {
-  if (min == null) return null;
-  if (min < 60) return `${Math.round(min)}m`;
-  const hours = min / 60;
-  if (hours < 24) return `${Math.round(hours)}h`;
-  return `${Math.round(hours / 24)}d`;
+const TYPING_MS = 800;
+const POLL_MS = 60000;
+const FEED_ICON = { ok: '✓', handoff: '↪', agent: '👤', bot: '💬' };
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Buenos días';
+  if (h < 19) return 'Buenas tardes';
+  return 'Buenas noches';
 }
 
-function timeAgo(val) {
-  if (!val) return '';
-  const d = val?.seconds ? new Date(val.seconds * 1000) : new Date(val);
-  const diff = Math.floor((Date.now() - d) / 1000);
-  if (diff < 60) return 'ahora';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
+function todayLabel() {
+  const s = new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-const STATUS_LABEL = {
-  bot: 'Bot',
-  escalated: 'Derivada',
-  resolved: 'Resuelta',
-  urgent: 'Urgente',
-  bot_archived: 'Archivada',
-};
+function clock() {
+  return new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
 
-const STATUS_STYLE = {
-  bot: styles.statusBot,
-  escalated: styles.statusEscalated,
-  resolved: styles.statusResolved,
-  urgent: styles.statusUrgent,
-};
+function CountNum({ value, animate, suffix = '' }) {
+  const v = useCountUp(value, { animate });
+  return <>{v}{suffix}</>;
+}
+
+function Spark({ values, color, delay }) {
+  if (!values || values.length < 2 || Math.max(...values) === Math.min(...values)) {
+    return <div className={styles.sparkEmpty} />;
+  }
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const pts = values
+    .map((v, i) => `${Math.round((i / (values.length - 1)) * 120)},${(20 - ((v - min) / (max - min)) * 17).toFixed(1)}`)
+    .join(' ');
+  return (
+    <svg width="100%" height="22" viewBox="0 0 120 22" preserveAspectRatio="none" className={styles.spark}>
+      <polyline className="anim-draw" style={{ '--d': `${delay}ms` }} fill="none" stroke={color} strokeWidth="2" points={pts} />
+    </svg>
+  );
+}
+
+function Delta({ text, good }) {
+  if (text === null) return <span className={`${styles.delta} ${styles.deltaNone}`}>—</span>;
+  return <span className={`${styles.delta} ${good ? '' : styles.deltaDown}`}>{text}</span>;
+}
+
+function signed(n, unit = '') {
+  return `${n > 0 ? '+' : ''}${n}${unit}`;
+}
 
 export default function Dashboard() {
   const { agent } = useAuth();
+  const { botName } = useBrand();
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
-  const [recent, setRecent] = useState([]);
+  const [week, setWeek] = useState(null);
+  const [convs, setConvs] = useState([]);
+  const [areas, setAreas] = useState([]);
+  const [nameMap, setNameMap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(false);
 
+  const firstLoad = useFirstLoad(loading);
+
+  const loadingRef = useRef(false);
   const load = useCallback(async () => {
-    setLoading(true);
+    if (loadingRef.current) return; // no superponer cargas (botón + polling)
+    loadingRef.current = true;
+    setRefreshing(true);
     try {
-      const [statsRes, convsRes] = await Promise.all([
+      const [dayRes, weekRes, convsRes, areasRes, usersRes] = await Promise.all([
         authFetch(BASE_URL + '/api/stats?period=day'),
+        authFetch(BASE_URL + '/api/stats?period=week'),
         authFetch(BASE_URL + '/api/conversations'),
+        authFetch(BASE_URL + '/api/areas').catch(() => null),
+        authFetch(BASE_URL + '/api/auth/users').catch(() => null),
       ]);
-      const [statsData, convsData] = await Promise.all([statsRes.json(), convsRes.json()]);
-      setStats(statsData);
-      setRecent((convsData.conversations ?? []).slice(0, 6));
+      if (!dayRes.ok || !weekRes.ok || !convsRes.ok) throw new Error('No se pudo cargar el resumen');
+      const [dayData, weekData, convsData] = await Promise.all([dayRes.json(), weekRes.json(), convsRes.json()]);
+      const areasData = areasRes?.ok ? await areasRes.json() : { areas: [] };
+      const users = usersRes?.ok ? await usersRes.json() : [];
+      const loadedAreas = areasData.areas ?? [];
+      const map = {};
+      for (const a of loadedAreas) map[a.id] = a.name;
+      for (const u of Array.isArray(users) ? users : []) { map[u.email] = u.name; map[u.id] = u.name; }
+      setAreas(loadedAreas);
+      setNameMap(map);
+      setStats(dayData);
+      setWeek(weekData);
+      setConvs(convsData.conversations ?? []);
+      setError(false);
     } catch {
-      setStats(null);
+      setError(true);
     } finally {
+      loadingRef.current = false;
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const greeting = () => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Buenos días';
-    if (h < 19) return 'Buenas tardes';
-    return 'Buenas noches';
-  };
+  // Refresco silencioso cada 60 s (no reanima: los números ya contaron una vez).
+  // Con la pestaña oculta se saltea el tick.
+  useEffect(() => {
+    const t = setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
+    return () => clearInterval(t);
+  }, [load]);
+
+  // "escribiendo…" solo en la primera carga animada; después los globos entran directo.
+  const [typing, setTyping] = useState(false);
+  useEffect(() => {
+    if (!firstLoad) return undefined;
+    setTyping(true);
+    const t = setTimeout(() => setTyping(false), TYPING_MS);
+    return () => clearTimeout(t);
+  }, [firstLoad]);
+
+  const messages = useMemo(() => tediSummary(stats, { botName }), [stats, botName]);
+  const queue = useMemo(() => waitingQueue(convs, { areas, nameMap }), [convs, areas, nameMap]);
+  const feed = useMemo(() => activityFeed(convs, { botName, areas, nameMap }), [convs, botName, areas, nameMap]);
+  const time = useMemo(() => clock(), [stats]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const trend = week?.dailyTrend ?? [];
+  const prev = stats?.previous ?? {};
+  const rate = stats?.botResolutionRate ?? 0;
+  const first = stats?.avgFirstResponseMin;
+
+  const convDelta = kpiDelta(stats?.total, prev.total);
+  const rateDelta = prev.botResolutionRate ? rate - prev.botResolutionRate : null;
+  const firstDeltaSec = first != null && prev.avgFirstResponseMin ? Math.round((first - prev.avgFirstResponseMin) * 60) : null;
+
+  const firstLabel = first == null ? '—' : first < 1 ? `${Math.round(first * 60)}s` : fmt(first);
+
+  const kpis = [
+    {
+      key: 'conv', label: 'Conversaciones', value: stats?.total ?? 0, color: 'var(--brand)',
+      delta: convDelta === null ? null : signed(convDelta, '%'), good: (convDelta ?? 0) >= 0,
+      series: trend.map((d) => d.started),
+    },
+    {
+      key: 'rate', label: `Resolvió ${botName}`, value: rate, suffix: '%', color: 'var(--brand)',
+      delta: rateDelta === null ? null : signed(rateDelta, ' pts'), good: (rateDelta ?? 0) >= 0,
+      series: trend.map((d) => (d.started ? Math.round((d.resolvedByBot / d.started) * 100) : 0)),
+    },
+    {
+      key: 'first', label: '1ª respuesta', text: firstLabel, color: 'var(--brand)',
+      delta: firstDeltaSec === null ? null : signed(firstDeltaSec, 's'), good: (firstDeltaSec ?? 0) <= 0,
+      series: null,
+    },
+    {
+      key: 'wait', label: 'Esperando', value: stats?.awaitingAgent ?? 0, color: '#e8473f', valueColor: '#e8473f',
+      delta: null, good: true,
+      series: trend.map((d) => d.escalated),
+    },
+  ];
+
+  const attend = (c) => navigate(`/conversations?contact=${encodeURIComponent(c.id)}`);
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${firstLoad ? 'is-entering' : ''}`}>
       <header className={styles.header}>
         <div>
-          <h1 className={styles.title}>{greeting()}, {agent?.name?.split(' ')[0]}</h1>
-          <p className={styles.subtitle}>Actividad de hoy</p>
+          <h1 className={styles.hello}>{greeting()}, {agent?.name?.split(' ')[0]} 👋</h1>
+          <p className={styles.sub}><span className={styles.live} />{todayLabel()} · en vivo</p>
         </div>
-        <button className={styles.refreshBtn} onClick={load} title="Actualizar">
+        <button className={`${styles.refreshBtn} ${refreshing ? styles.spinning : ''}`} onClick={load} title="Actualizar" aria-label="Actualizar">
           <IconRefresh />
         </button>
       </header>
 
-      {loading ? (
-        <DashboardSkeleton />
+      {error && !stats ? (
+        <p className={styles.error}>No pudimos cargar el resumen. Probá actualizar.</p>
       ) : (
-        <>
-          <div className={styles.statsGrid}>
-            <StatCard icon={<IconMessages />} label="Conversaciones hoy" value={stats?.total ?? 0} accent="primary" />
-            <StatCard
-              icon={<IconCheck />} label="Resueltas hoy" value={stats?.resolved ?? 0} accent="resolved"
-              sub={stats?.resolved ? `${stats.resolvedByBot} bot · ${stats.resolvedByAgent} agente` : undefined}
-            />
-            <StatCard
-              icon={<IconArrow />} label="Esperando agente" value={stats?.awaitingAgent ?? 0}
-              accent={stats?.awaitingAgent > 0 ? 'urgent' : 'escalated'}
-              sub={stats?.oldestAwaitingMin != null ? `la más vieja espera hace ${fmtWaitTime(stats.oldestAwaitingMin)}` : undefined}
-            />
-            <StatCard icon={<IconClock />}    label="Bot activo" value={stats?.byStatus?.bot ?? 0} accent="bot" />
-            <StatCard icon={<IconWpp />}      label="WhatsApp" value={stats?.byChannel?.whatsapp ?? 0} accent="whatsapp" />
-            <StatCard icon={<IconIg />}       label="Instagram" value={stats?.byChannel?.instagram ?? 0} accent="instagram" />
+        <div className={styles.grid}>
+          <div className={styles.main}>
+            <section className={styles.tedi}>
+              <div className={styles.from}><BotFace size={24} />{botName}</div>
+              {loading ? (
+                <div className={styles.skelBubbles}>
+                  <Skeleton w="70%" h={34} radius={9} />
+                  <Skeleton w="55%" h={34} radius={9} />
+                </div>
+              ) : typing ? (
+                <div className={styles.typing} aria-label="escribiendo"><i /><i /><i /></div>
+              ) : (
+                messages.map((m, i) => (
+                  <div key={i} className={`${styles.msg} anim-pop`} style={{ '--d': `${i * 350}ms` }}>
+                    {m}
+                    <small>{time}</small>
+                  </div>
+                ))
+              )}
+            </section>
+
+            <div className={styles.kpis}>
+              {kpis.map((k, i) => (
+                loading ? (
+                  <div key={k.key} className={styles.kpi}>
+                    <Skeleton w="60%" h={12} />
+                    <Skeleton w="45%" h={26} style={{ marginTop: 8 }} />
+                    <Skeleton h={22} style={{ marginTop: 6 }} />
+                  </div>
+                ) : (
+                  <div key={k.key} className={`${styles.kpi} anim-rise`} style={{ '--d': `${500 + i * 80}ms` }}>
+                    <small>{k.label}</small>
+                    <div className={styles.kpiRow}>
+                      <strong className={styles.num} style={k.valueColor ? { color: k.valueColor } : undefined}>
+                        {k.text ?? <CountNum value={k.value} animate={firstLoad} suffix={k.suffix} />}
+                      </strong>
+                      <Delta text={k.delta} good={k.good} />
+                    </div>
+                    <Spark values={k.series} color={k.color} delay={700 + i * 80} />
+                  </div>
+                )
+              ))}
+            </div>
+
+            <section className={styles.card}>
+              <div className={styles.cardHead}><b>Te esperan</b><small>ordenadas por tiempo de espera</small></div>
+              {loading ? (
+                <>
+                  <Skeleton h={36} style={{ marginBottom: 10 }} />
+                  <Skeleton h={36} />
+                </>
+              ) : queue.length === 0 ? (
+                <p className={styles.empty}>No hay nadie esperando 🙌</p>
+              ) : (
+                queue.map((c) => {
+                  const name = c.contactName || c.contactId;
+                  return (
+                    <div key={c.id} className={styles.it}>
+                      <span className={styles.av} style={{ background: avatarColor(c.contactId || c.id) }}>
+                        {initials(name)}
+                        <sub className={c.channel === 'instagram' ? styles.ig : ''} />
+                      </span>
+                      <div className={styles.itBody}>
+                        <b>{name}</b>
+                        <p>{c.lastMessage || ' '}</p>
+                      </div>
+                      <span className={`${styles.timer} ${styles[`timer_${waitLevel(c.waitMin)}`] || ''}`}>{fmt(c.waitMin)}</span>
+                      <button className={styles.attend} onClick={() => attend(c)}>Atender</button>
+                    </div>
+                  );
+                })
+              )}
+            </section>
           </div>
 
-          {stats?.resolved > 0 ? (
-            <div className={styles.rateBar}>
-              <span className={styles.rateLabel}>
-                De las {stats.resolved} resueltas hoy, el bot cerró {stats.resolvedByBot} sin ayuda de un agente
-              </span>
-              <div className={styles.barTrack}>
-                <div className={styles.barFill} style={{ width: `${stats.botResolutionRate}%` }} />
-              </div>
-              <span className={styles.rateValue}>{stats.botResolutionRate}%</span>
-            </div>
-          ) : (
-            <div className={styles.rateBar}>
-              <span className={styles.rateLabel}>Todavía no se resolvió ninguna conversación hoy</span>
-            </div>
-          )}
-
-          <section className={styles.section}>
-            <div className={styles.sectionHead}>
-              <h2 className={styles.sectionTitle}>Últimas conversaciones</h2>
-              <button className={styles.linkBtn} onClick={() => navigate('/conversations')}>
-                Ver todas →
-              </button>
-            </div>
-            {recent.length === 0 ? (
-              <div className={styles.emptyState}>
-                <span className={styles.emptyIcon}>💬</span>
-                <p>Sin conversaciones todavía. Cuando llegue el primer mensaje aparecerá acá.</p>
-              </div>
+          <aside className={styles.card}>
+            <div className={styles.cardHead}><b>Pasando ahora</b><small><span className={styles.live} /></small></div>
+            {loading ? (
+              <>
+                <Skeleton h={30} style={{ marginBottom: 10 }} />
+                <Skeleton h={30} style={{ marginBottom: 10 }} />
+                <Skeleton h={30} />
+              </>
+            ) : feed.length === 0 ? (
+              <p className={styles.empty}>Todavía no pasó nada.</p>
             ) : (
-              <div className={styles.convList}>
-                {recent.map(c => (
-                  <ConvRow key={c.id} conv={c} onClick={() => navigate('/conversations')} />
-                ))}
-              </div>
+              feed.map((e, i) => (
+                <div key={e.key} className={`${styles.ev} anim-pop`} style={{ '--d': `${900 + i * 100}ms` }}>
+                  <span className={`${styles.ic} ${styles[`ic_${e.icon}`]}`}>{FEED_ICON[e.icon]}</span>
+                  <div><b>{e.title}</b><p>{e.sub}</p></div>
+                </div>
+              ))
             )}
-          </section>
-        </>
-      )}
-    </div>
-  );
-}
-
-function StatCard({ icon, label, value, accent, sub }) {
-  return (
-    <div className={`${styles.statCard} ${styles[`accent_${accent}`]}`}>
-      <div className={styles.statIcon}>{icon}</div>
-      <span className={styles.statValue}>{value}</span>
-      <span className={styles.statLabel}>{label}</span>
-      {sub && <span className={styles.statSub}>{sub}</span>}
-    </div>
-  );
-}
-
-function ConvRow({ conv, onClick }) {
-  const name = conv.contactName || conv.contactId;
-  const channel = conv.channel === 'whatsapp' ? 'WPP' : 'IG';
-  const channelClass = conv.channel === 'whatsapp' ? styles.badgeWpp : styles.badgeIg;
-  const statusClass = STATUS_STYLE[conv.status] ?? styles.statusBot;
-
-  return (
-    <button className={styles.convRow} onClick={onClick}>
-      <div className={styles.convAvatar}>{(name?.[0] ?? '?').toUpperCase()}</div>
-      <div className={styles.convBody}>
-        <div className={styles.convTop}>
-          <span className={styles.convName}>{name}</span>
-          <span className={styles.convTime}>{timeAgo(conv.lastMessageAt)}</span>
+          </aside>
         </div>
-        <p className={styles.convMsg}>{conv.lastMessage || '—'}</p>
-      </div>
-      <div className={styles.convBadges}>
-        <span className={`${styles.badge} ${channelClass}`}>{channel}</span>
-        <span className={`${styles.badge} ${statusClass}`}>{STATUS_LABEL[conv.status] ?? conv.status}</span>
-      </div>
-    </button>
-  );
-}
-
-function DashboardSkeleton() {
-  return (
-    <div className={styles.skeleton}>
-      <div className={styles.skeletonGrid}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className={styles.skeletonCard} style={{ animationDelay: `${i * 80}ms` }} />
-        ))}
-      </div>
-      <div className={styles.skeletonList}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className={styles.skeletonRow} style={{ animationDelay: `${i * 60}ms` }}>
-            <div className={styles.skeletonCircle} />
-            <div className={styles.skeletonLines}>
-              <div className={styles.skeletonLine} style={{ width: '40%' }} />
-              <div className={styles.skeletonLine} style={{ width: '70%', opacity: .6 }} />
-            </div>
-          </div>
-        ))}
-      </div>
+      )}
     </div>
   );
 }
 
 function IconRefresh() {
   return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>;
-}
-function IconMessages() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>;
-}
-function IconClock() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>;
-}
-function IconArrow() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>;
-}
-function IconCheck() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
-}
-function IconWpp() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>;
-}
-function IconIg() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>;
 }

@@ -1,7 +1,8 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { BrandProvider } from './contexts/BrandContext';
 import { setLogoutHandler } from './lib/api';
-import Layout from './components/Layout/Layout.jsx';
+import Layout, { homePath } from './components/Layout/Layout.jsx';
 import Dashboard     from './pages/Dashboard.jsx';
 import Conversations from './pages/Conversations.jsx';
 import Simulator     from './pages/Simulator.jsx';
@@ -22,9 +23,11 @@ import Campaigns     from './pages/Campaigns.jsx';
 export default function App() {
   return (
     <AuthProvider>
-      <HashRouter>
-        <AppRoutes />
-      </HashRouter>
+      <BrandProvider>
+        <HashRouter>
+          <AppRoutes />
+        </HashRouter>
+      </BrandProvider>
     </AuthProvider>
   );
 }
@@ -37,9 +40,9 @@ function AppRoutes() {
 
   return (
     <Routes>
-        <Route path="/login" element={agent ? <Navigate to="/dashboard" replace /> : <Login />} />
+        <Route path="/login" element={agent ? <Navigate to={homePath(agent.role)} replace /> : <Login />} />
         <Route path="/" element={agent ? <Layout /> : <Navigate to="/login" replace />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<Navigate to={homePath(agent?.role)} replace />} />
           <Route path="dashboard"     element={<Dashboard />} />
           <Route path="conversations" element={<Conversations />} />
           <Route path="customers"     element={<Customers />} />
