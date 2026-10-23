@@ -579,7 +579,7 @@
 .msgUser .msgBubble { background: #fff; }
 .msgBot .msgBubble  { background: var(--wpp-out); }
 
-/* Firma del globo: "🙂 TeDi · bot" o el nombre del agente */
+/* Firma del globo: "🙂 Entreno · bot" o el nombre del agente */
 .msgBy {
   display: flex;
   align-items: center;

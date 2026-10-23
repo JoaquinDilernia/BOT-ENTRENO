@@ -37,7 +37,7 @@ export function relTime(ts, now = new Date()) {
   return `hace ${Math.floor(min / 1440)} d`;
 }
 
-/** Mensajes de TeDi con el resumen del día (1 o 2). */
+/** Mensajes del bot con el resumen del día (1 o 2). */
 export function tediSummary(stats, { botName } = {}) { // eslint-disable-line no-unused-vars
   const { total = 0, resolvedByBot = 0, escalatedCount = 0, awaitingAgent = 0, oldestAwaitingMin } = stats || {};
   if (!total) return ['Todavía no entró nadie hoy. Acá te aviso apenas llegue alguien 👀'];
