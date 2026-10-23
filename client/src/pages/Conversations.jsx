@@ -22,6 +22,9 @@ const CHANNEL_CONFIG = {
 };
 
 const FILTERS = [
+  // Todo lo que el bot derivó a humanos, tenga o no agente asignado — sin esto
+  // las derivaciones sin asignar no aparecían en ningún filtro.
+  { value: 'escalated',     label: 'Derivados',  minRole: 'atencion_cliente' },
   { value: 'bot',           label: 'Bot' },
   { value: 'mine',          label: 'Mis casos' },
   { value: 'urgent',        label: 'Urgentes' },
@@ -678,7 +681,9 @@ export default function Conversations() {
   const [customer, setCustomer] = useState(null);
   const [notes, setNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
-  const [filter, setFilter] = useState('bot');
+  const [filter, setFilter] = useState(
+    agent?.role === 'admin' || agent?.role === 'atencion_cliente' ? 'escalated' : 'bot'
+  );
   const [labelFilter, setLabelFilter] = useState(null);
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState(null); // null = no está buscando; array = resultados del backend
@@ -1481,6 +1486,9 @@ export default function Conversations() {
           if (isConvArchived) return false;
           if (convHuman) return false;
           if (status !== 'bot') return false;
+        } else if (filter === 'escalated') {
+          if (isConvArchived) return false;
+          if (!convHuman) return false;
         } else if (filter === 'mine') {
           if (isConvArchived) return false;
           const myAreaIds = agent?.areaIds ?? [];

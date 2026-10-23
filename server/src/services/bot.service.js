@@ -163,9 +163,10 @@ function parseEscalationMarker(text, areas = []) {
     re: new RegExp(`\\[ESCALAR_${a.id.toUpperCase()}\\]`, 'i'),
     assignTo: a.id,
   }));
-  // Fallback genérico — no fuerza un área por defecto, queda sin asignar
-  // hasta que un agente lo tome manualmente.
-  markers.push({ re: /\[ESCALAR\]/i, assignTo: null });
+  // Fallback genérico — si hay una sola área va a esa (si no, la derivación
+  // quedaba sin asignar y no la veía nadie); con varias queda sin asignar
+  // hasta que un agente la tome manualmente.
+  markers.push({ re: /\[ESCALAR\]/i, assignTo: areas.length === 1 ? areas[0].id : null });
 
   for (const { re, assignTo } of markers) {
     if (!re.test(text)) continue;
