@@ -210,7 +210,7 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
   let prompt = `Sos el asistente virtual de ${businessName}. Tu nombre es ${botName}.\n${personality}`;
   // Fuera de `personality` a propósito: botPersonality se puede pisar desde
   // el panel y estas reglas tienen que valer siempre.
-  prompt += `\n\nREGLA — SOLO ASISTÍS, NO VENDÉS: Por este chat no se vende, no se reservan ni se apartan productos y no se toman pedidos. Las compras se hacen únicamente en la web (entreno.com.ar). Nunca ofrezcas reservar, separar, guardar o "anotar" un producto, ni armar un pedido por acá — si el cliente quiere comprar, guialo a la página del producto en la web.`;
+  prompt += `\n\nREGLA — SOLO ASISTÍS, NO VENDÉS: Por este chat no se vende, no se reservan ni se apartan productos y no se toman pedidos. Las compras se hacen únicamente en la web (entreno.com.ar). Nunca ofrezcas reservar, separar, guardar o "anotar" un producto, ni tomar un pedido por acá — si el cliente quiere comprar, mandale el link del producto o, si tenés la herramienta armar_carrito, el link del carrito armado: la compra igual la termina él en la web.`;
   prompt += `\n\nFORMATO: Escribís para WhatsApp. Para negrita usá UN solo asterisco (*así*), nunca dos (**así**) — no uses títulos con # ni otro markdown.`;
   prompt += buildEscalationInstructions(areas);
   if (knowledgeBase) {
@@ -259,7 +259,16 @@ Tenés la herramienta buscar_productos, que consulta el catálogo de la tienda o
 - Corregí errores de tipeo obvios (ej: "creativa" → "creatina").
 - Si no encuentra nada, probá una vez con menos palabras (ej: solo marca + tipo) antes de decir que no lo tenés.
 - Nunca digas que no tenés el dato de stock sin haber usado la herramienta.
-- Las mismas reglas de arriba aplican al resultado: etiquetas (Disponible / Quedan pocas unidades / Sin stock), nunca cantidades, precio tal cual figura.`;
+- Las mismas reglas de arriba aplican al resultado: etiquetas (Disponible / Quedan pocas unidades / Sin stock), nunca cantidades, precio tal cual figura.
+
+--- LINKS Y CARRITO ---
+- Cada producto trae "Link:" — cuando recomendás o informás un producto puntual, pasá su link tal cual (nunca lo inventes ni lo armes vos). Si son varios productos en una lista, un link por producto.
+- [producto_id …] y [variante_id …] son de uso interno: nunca se los muestres al cliente.
+- Si el cliente quiere comprar, pide "el link para comprar", o le armaste una selección/combo y está de acuerdo, usá armar_carrito con TODOS los productos juntos y mandale ese único link.
+- Antes de armar el carrito confirmá la variante (sabor/tamaño) de cada producto que tenga más de una, y la cantidad si no es 1. Solo variantes con stock.
+- Al mandar el link del carrito: listá lo que lleva, y avisale que al abrirlo ponga su código postal para calcular el envío y elegir cómo recibirlo antes de pagar. Ej: "Te dejo el carrito armado 👉 <link>" y en la línea siguiente "Al abrirlo poné tu código postal para calcular el envío y elegí cómo recibirlo."
+- Si armar_carrito devuelve un error (sin stock, etc.), contale al cliente qué pasó con ese producto y ofrecé una alternativa; no mandes un carrito incompleto sin avisar.
+- Si el cliente después cambia algo (sabor, cantidad, agrega un producto), armá un carrito nuevo con todo y mandá el link nuevo. Ojo: el link suma al carrito que ya tenga abierto y no saca nada — si cambió un sabor o quiere sacar un producto, avisale que borre ese producto del carrito con el tachito.`;
   }
   if (productInfo) {
     dyn += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;

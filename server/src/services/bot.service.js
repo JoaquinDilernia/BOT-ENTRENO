@@ -18,7 +18,8 @@ import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveAreas } from './area.service.js';
 import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
-import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, searchProductsByCategory, formatStockInfo, formatProductsSummary } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, searchProductsByCategory, formatStockInfo, formatProductsSummary, getProductById } from './tiendanube.service.js';
+import { createCartLink } from './cart.js';
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /reclamo/i, /estafa/i, /fraude/i,
@@ -431,7 +432,7 @@ async function processIncomingMessageInternal(msg) {
       botConfig,
       imageData,
       areas,
-      tools: [PRODUCT_SEARCH_TOOL],
+      tools: [PRODUCT_SEARCH_TOOL, CART_TOOL],
       runTool: runBotTool,
     });
   } catch (err) {
@@ -533,9 +534,36 @@ export const PRODUCT_SEARCH_TOOL = {
   },
 };
 
+// El bot nunca escribe el link del carrito: pide variantes y cantidades y
+// cart.js las valida contra TiendaNube y arma el cart-link.
+export const CART_TOOL = {
+  name: 'armar_carrito',
+  description: 'Arma un link al carrito de la tienda online con los productos ya cargados, para que el cliente solo tenga que calcular el envío y pagar. Usá producto_id y variante_id exactamente como los devuelve buscar_productos (o la sección PRECIO Y STOCK). Si algún producto no existe o no tiene stock, no arma nada y te dice por qué.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      productos: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            producto_id: { type: 'integer' },
+            variante_id: { type: 'integer', description: 'La variante elegida (sabor/tamaño)' },
+            cantidad: { type: 'integer', minimum: 1 },
+          },
+          required: ['producto_id', 'variante_id', 'cantidad'],
+        },
+      },
+    },
+    required: ['productos'],
+  },
+};
+
 const TOOL_PRODUCT_LIMIT = 15;
 
 export async function runBotTool(name, input) {
+  if (name === 'armar_carrito') return createCartLink(input?.productos, getProductById);
   if (name !== 'buscar_productos') return { error: `Herramienta desconocida: ${name}` };
   const consulta = String(input?.consulta ?? '').trim();
   if (!consulta) return { error: 'Falta la consulta' };
@@ -579,7 +607,7 @@ async function resolveStockContext(text) {
     // precio+stock de todos, no solo el primero.
     const info = products.length === 1 ? formatStockInfo(products[0]) : formatProductsSummary(products);
     if (!info) return null;
-    return `${info}\n\nEl cliente también puede confirmar precio y stock actualizado en la página del producto en entreno.com.ar.`;
+    return `${info}\n\nEl cliente también puede confirmar precio y stock actualizado en el link de cada producto.`;
   } catch (err) {
     console.error('[bot] resolveStockContext error:', err.message);
     return null;

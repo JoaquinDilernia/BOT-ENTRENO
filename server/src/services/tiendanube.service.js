@@ -225,6 +225,25 @@ export async function getOrderById(orderId) {
   }
 }
 
+// canonical_url = link público del producto (lo manda el bot); published
+// lo necesita la validación del carrito (cart.js).
+const PRODUCT_FIELDS = 'id,name,description,images,variants,canonical_url,published';
+
+/**
+ * Producto puntual por id (para validar el carrito armado por el bot).
+ * @param {number} productId
+ * @returns {Promise<object|null>} null si no existe
+ */
+export async function getProductById(productId) {
+  try {
+    const { data } = await client.get(`/products/${productId}`, { params: { fields: PRODUCT_FIELDS } });
+    return data ?? null;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw err;
+  }
+}
+
 /**
  * Busca productos por nombre o categoría. Trae también `variants` (incluye
  * stock y precio por variante — a diferencia de BOT-ALTORANCHO, Entreno no
@@ -240,7 +259,7 @@ export async function getOrderById(orderId) {
 export async function searchProducts(query) {
   try {
     const { data } = await client.get('/products', {
-      params: { q: query, published: true, fields: 'id,name,description,images,variants' },
+      params: { q: query, published: true, fields: PRODUCT_FIELDS },
     });
     return data ?? [];
   } catch (err) {
@@ -261,7 +280,7 @@ export async function searchProducts(query) {
 export async function searchProductsByCategory(categoryId) {
   try {
     const { data } = await client.get('/products', {
-      params: { category_id: categoryId, published: true, fields: 'id,name,description,images,variants', per_page: 50 },
+      params: { category_id: categoryId, published: true, fields: PRODUCT_FIELDS, per_page: 50 },
     });
     return data ?? [];
   } catch (err) {
@@ -427,10 +446,12 @@ export function formatStockInfo(product) {
       availability = 'Disponible';
     }
 
-    return `- ${label}: ${priceStr} — ${availability}`;
+    // variante_id es para armar_carrito — uso interno, no se le muestra al cliente.
+    return `- ${label}: ${priceStr} — ${availability} [variante_id ${v.id}]`;
   }).join('\n');
 
-  return `Producto: ${name}\n${lines}`;
+  const link = product.canonical_url ? `\nLink: ${product.canonical_url}` : '';
+  return `Producto: ${name} [producto_id ${product.id}]${link}\n${lines}`;
 }
 
 const PRODUCT_LIST_LIMIT = 8;
