@@ -725,6 +725,8 @@ export default function Conversations() {
   const [newConvError, setNewConvError] = useState('');
   const [summary, setSummary] = useState(null);
   const [summaryGenerating, setSummaryGenerating] = useState(false);
+  const [areas, setAreas] = useState([]);
+  const [teamsAreaFilter, setTeamsAreaFilter] = useState('');
   const [agentsList, setAgentsList] = useState([]);
   const [nameMap, setNameMap] = useState({});
   const [apiWindowError, setApiWindowError] = useState(false);
@@ -786,6 +788,7 @@ export default function Conversations() {
       authFetch(BASE_URL + '/api/auth/users').then(r => r.ok ? r.json() : []),
     ]).then(([areasData, agents]) => {
       const loadedAreas = areasData.areas ?? [];
+      setAreas(loadedAreas);
       setAgentsList(agents.filter(a => a.role !== 'admin'));
       const map = {};
       for (const a of loadedAreas) map[a.id] = a.name;
