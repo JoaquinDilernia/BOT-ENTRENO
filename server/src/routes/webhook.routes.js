@@ -44,7 +44,7 @@ router.post('/', async (req, res) => {
       // Handle delivery status updates
       const statusUpdate = parseWhatsAppStatusUpdate(body);
       if (statusUpdate) {
-        const { waMsgId, status, recipientId: rawRecipientId } = statusUpdate;
+        const { waMsgId, status, recipientId: rawRecipientId, errors } = statusUpdate;
         // Mismo motivo que en processIncomingMessage: el recipient_id que
         // devuelve Meta puede venir con o sin el 9, y la conversación está
         // indexada por el teléfono canónico.
@@ -52,12 +52,18 @@ router.post('/', async (req, res) => {
         // Map WA statuses to our internal statuses
         // 'sent' → 'sent', 'delivered' → 'delivered', 'read' → 'read', 'failed' → 'error'
         const mapped = status === 'failed' ? 'error' : status;
+        // Meta acepta el envío y avisa DESPUÉS que falló: el motivo viene acá
+        // y es lo único que explica por qué no llegó (ej. falta método de pago).
+        const msgError = mapped === 'error' && errors?.length
+          ? errors.map(e => [e.code, e.title, e.error_data?.details].filter(Boolean).join(' — ')).join(' | ')
+          : null;
+        if (msgError) console.error(`[webhook] Envío fallido a ${rawRecipientId} (${waMsgId}): ${msgError}`);
         if (['delivered', 'read', 'error'].includes(mapped)) {
           // Un waMsgId es de una conversación normal O de un envío de
           // difusión, nunca de las dos — probar ambas rutas es barato (cada
           // una no hace nada si no encuentra su documento) y evita tener que
           // distinguir el origen del mensaje en este punto.
-          updateMessageStatusByWaMsgId(recipientId, waMsgId, mapped).catch(err =>
+          updateMessageStatusByWaMsgId(recipientId, waMsgId, mapped, msgError).catch(err =>
             console.error('[webhook] Error actualizando estado de mensaje:', err.message)
           );
           updateCampaignSendStatusByWaMsgId(waMsgId, mapped).catch(err =>

@@ -130,12 +130,39 @@ function slaColor(waitMs) {
 }
 
 // Delivery status icon for agent messages
-function MsgStatusIcon({ msgStatus }) {
+// Motivo que Meta devuelve por webhook cuando un envío falla, traducido a algo
+// accionable para el agente (sin el motivo solo veía "No enviado").
+const META_ERROR_HINTS = {
+  131042: "Problema con el pago de la cuenta de WhatsApp (falta cargar tarjeta o falló el cobro). Revisalo en Meta Business → Facturación y pagos.",
+  131047: "Pasaron más de 24 hs desde el último mensaje del cliente (o nunca escribió). Mandale una plantilla y esperá que responda.",
+  131049: "Meta no la entregó para no saturar al cliente con mensajes de marketing. No sirve reintentar ya: probá más tarde o esperá que escriba.",
+  131026: "El número no tiene WhatsApp, o no puede recibir este mensaje (app vieja / no aceptó términos).",
+  131048: "Meta frenó el envío por límite de spam / calidad del número. Esperá un rato antes de seguir enviando.",
+  130472: "Meta excluyó este número de los mensajes de marketing (experimento de Meta). No se puede enviar por ahora.",
+  131050: "El cliente bloqueó los mensajes de marketing de esta empresa.",
+  132001: "La plantilla no existe o no está aprobada en ese idioma.",
+  132015: "La plantilla está pausada por baja calidad.",
+  132016: "La plantilla fue deshabilitada por Meta.",
+};
+function sendErrorHint(msgError) {
+  if (!msgError) return null;
+  const code = Number(String(msgError).match(/^\d+/)?.[0]);
+  return META_ERROR_HINTS[code] ?? String(msgError);
+}
+
+function MsgStatusIcon({ msgStatus, msgError }) {
   if (!msgStatus || msgStatus === 'sent') return <span className={styles.msgStatus}>✓</span>;
   if (msgStatus === 'sending') return <span className={styles.msgStatus}>⏳</span>;
   if (msgStatus === 'delivered') return <span className={styles.msgStatus}>✓✓</span>;
   if (msgStatus === 'read') return <span className={`${styles.msgStatus}`} style={{ color: '#3b82f6' }}>✓✓</span>;
-  if (msgStatus === 'error') return <span className={`${styles.msgStatus} ${styles.msgStatusError}`}>✗ No enviado</span>;
+  if (msgStatus === 'error') {
+    const hint = sendErrorHint(msgError);
+    return (
+      <span className={`${styles.msgStatus} ${styles.msgStatusError}`} title={msgError ?? undefined}>
+        ✗ No enviado{hint && <span className={styles.msgErrorHint}>{hint}</span>}
+      </span>
+    );
+  }
   return null;
 }
 
@@ -400,7 +427,7 @@ function MessageBubble({
         )}
         {senderLabel}
         {msg.timestamp ? ` · ${formatDateTime(msg.timestamp)}` : ''}
-        {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} />}
+        {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} msgError={msg.msgError} />}
         {onQuote && msg.waMsgId && (
           <button
             type="button"

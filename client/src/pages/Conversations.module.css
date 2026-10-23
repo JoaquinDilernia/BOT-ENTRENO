@@ -1534,6 +1534,14 @@
   font-weight: 600;
 }
 
+.msgErrorHint {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  white-space: normal;
+  max-width: 280px;
+}
+
 .msgBubbleError {
   background: #fef2f2 !important;
   color: #991b1b !important;

@@ -231,7 +231,7 @@ export async function setMessageTranscript(contactId, mediaId, transcript) {
 // 'read' jamás se aplicaban (bug presente desde que existe esta función).
 const STATUS_RANK = { sending: 0, sent: 1, delivered: 2, read: 3 };
 
-export async function updateMessageStatusByWaMsgId(contactId, waMsgId, newStatus) {
+export async function updateMessageStatusByWaMsgId(contactId, waMsgId, newStatus, msgError = null) {
   if (!contactId) return;
   const db = getDb();
   const docRef = db.collection(COLLECTION).doc(contactId);
@@ -247,7 +247,7 @@ export async function updateMessageStatusByWaMsgId(contactId, waMsgId, newStatus
       const nextRank = STATUS_RANK[newStatus] ?? 0;
       if (nextRank < currentRank) return m;
     }
-    return { ...m, msgStatus: newStatus };
+    return { ...m, msgStatus: newStatus, ...(msgError && { msgError: String(msgError).slice(0, 300) }) };
   });
   await docRef.update({ messages: updated });
 }
