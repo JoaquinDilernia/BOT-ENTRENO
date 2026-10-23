@@ -20,6 +20,8 @@ import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
 import { findOrder, findOrdersByEmail, formatOrderStatus, searchProducts, searchProductsByCategory, formatStockInfo, formatProductsSummary, getProductById } from './tiendanube.service.js';
 import { createCartLink } from './cart.js';
+import { withCartUtm } from './cartAttribution.js';
+import { recordBotCart } from './botCart.service.js';
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /reclamo/i, /estafa/i, /fraude/i,
@@ -433,7 +435,7 @@ async function processIncomingMessageInternal(msg) {
       imageData,
       areas,
       tools: [PRODUCT_SEARCH_TOOL, CART_TOOL],
-      runTool: runBotTool,
+      runTool: (name, input) => runBotTool(name, input, { contactId: from }),
     });
   } catch (err) {
     console.error(`[bot] Claude falló definitivamente para ${from} tras reintentos:`, err.message);
@@ -534,6 +536,20 @@ export const PRODUCT_SEARCH_TOOL = {
   },
 };
 
+// Arma el carrito, le suma las UTM del bot (Analytics / TiendaNube) y lo
+// registra para la estadística de carritos — si el registro falla, el link
+// se manda igual.
+async function buildAndRecordCart(productos, contactId) {
+  const result = await createCartLink(productos, getProductById);
+  if (result.error) return result;
+  const link = withCartUtm(result.link);
+  if (contactId) {
+    await recordBotCart({ contactId, link, items: result.items, total: result.total })
+      .catch(err => console.error('[bot] No se pudo registrar el carrito:', err.message));
+  }
+  return { link, detalle: result.detalle };
+}
+
 // El bot nunca escribe el link del carrito: pide variantes y cantidades y
 // cart.js las valida contra TiendaNube y arma el cart-link.
 export const CART_TOOL = {
@@ -562,8 +578,8 @@ export const CART_TOOL = {
 
 const TOOL_PRODUCT_LIMIT = 15;
 
-export async function runBotTool(name, input) {
-  if (name === 'armar_carrito') return createCartLink(input?.productos, getProductById);
+export async function runBotTool(name, input, { contactId = null } = {}) {
+  if (name === 'armar_carrito') return buildAndRecordCart(input?.productos, contactId);
   if (name !== 'buscar_productos') return { error: `Herramienta desconocida: ${name}` };
   const consulta = String(input?.consulta ?? '').trim();
   if (!consulta) return { error: 'Falta la consulta' };

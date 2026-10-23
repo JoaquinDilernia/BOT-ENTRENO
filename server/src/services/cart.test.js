@@ -7,14 +7,14 @@ const PRODUCTS = {
     id: 10, name: { es: 'ENA Colageno Sport 407 GRS' }, published: true,
     canonical_url: 'https://www.entreno.com.ar/productos/ena-colageno-sport/',
     variants: [
-      { id: 101, values: [{ es: 'Naranja' }], stock_management: true, stock: 5 },
+      { id: 101, values: [{ es: 'Naranja' }], stock_management: true, stock: 5, price: '43500.00', promotional_price: '34800.00' },
       { id: 102, values: [{ es: 'Fruit Punch' }], stock_management: true, stock: 0 },
     ],
   },
   20: {
     id: 20, name: { es: 'STAR NUTRITION WHEY PROTEIN 2LB' }, published: true,
     canonical_url: 'https://www.entreno.com.ar/productos/star-whey/',
-    variants: [{ id: 201, values: [{ es: 'Vainilla' }], stock_management: false, stock: null }],
+    variants: [{ id: 201, values: [{ es: 'Vainilla' }], stock_management: false, stock: null, price: '105170.00', promotional_price: null }],
   },
   30: { id: 30, name: 'Oculto', published: false, canonical_url: 'https://www.entreno.com.ar/productos/oculto/', variants: [{ id: 301, stock: 3 }] },
 };
@@ -33,6 +33,8 @@ test('arma el link con varios productos y toma la tienda de canonical_url', asyn
     { producto_id: 10, variante_id: 101, cantidad: 2 },
   ], getProduct);
   assert.equal(r.link, 'https://www.entreno.com.ar/cart-link/201-1,101-2');
+  assert.equal(r.total, 105170 + 2 * 34800);
+  assert.deepEqual(r.items.map(i => [i.variantId, i.quantity, i.unitPrice]), [[201, 1, 105170], [101, 2, 34800]]);
   assert.deepEqual(r.detalle, ['1 x STAR NUTRITION WHEY PROTEIN 2LB (Vainilla)', '2 x ENA Colageno Sport 407 GRS (Naranja)']);
 });
 

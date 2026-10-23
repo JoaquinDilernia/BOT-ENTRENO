@@ -230,6 +230,39 @@ export async function getOrderById(orderId) {
 const PRODUCT_FIELDS = 'id,name,description,images,variants,canonical_url,published';
 
 /**
+ * Pedidos PAGADOS creados desde `since` (para atribuir ventas a los carritos
+ * del bot — ver cartAttribution.js). Pagina hasta `maxPages` x 200.
+ * @param {Date} since
+ * @returns {Promise<Array>}
+ */
+export async function getPaidOrdersSince(since, { maxPages = 10 } = {}) {
+  const all = [];
+  for (let page = 1; page <= maxPages; page++) {
+    let data;
+    try {
+      ({ data } = await client.get('/orders', {
+        params: {
+          payment_status: 'paid', created_at_min: since.toISOString(), per_page: 200, page,
+          fields: 'id,number,created_at,payment_status,total,customer,contact_phone,billing_phone,shipping_address,products,owner_note',
+        },
+      }));
+    } catch (err) {
+      // TiendaNube responde 404 cuando se pide una página después de la última.
+      if (err.response?.status === 404) break;
+      throw err;
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < 200) break;
+  }
+  return all;
+}
+
+/** Nota interna del dueño en un pedido (lo único editable de un pedido por API). */
+export async function setOrderOwnerNote(orderId, ownerNote) {
+  await client.put(`/orders/${orderId}`, { owner_note: ownerNote });
+}
+
+/**
  * Producto puntual por id (para validar el carrito armado por el bot).
  * @param {number} productId
  * @returns {Promise<object|null>} null si no existe

@@ -208,6 +208,9 @@ export default function Stats() {
             />
           </div>
 
+          {/* Carritos armados por el bot → ventas */}
+          <BotCartStats key={`carts-${qs}`} periodQs={qs} />
+
           {/* Daily breakdown: chart + table */}
           <section className={styles.section}>
             <h2 className={styles.sectionTitle}>
@@ -337,6 +340,80 @@ export default function Stats() {
         </div>
       )}
     </div>
+  );
+}
+
+const CART_STATUS = {
+  purchased: { label: 'Comprado', color: 'var(--color-status-resolved)' },
+  pending:   { label: 'Pendiente', color: '#f59e0b' },
+  expired:   { label: 'Sin compra', color: '#94a3b8' },
+};
+
+function fmtMoney(n) {
+  return '$' + Math.round(n ?? 0).toLocaleString('es-AR');
+}
+
+// Carritos que armó el bot (tool armar_carrito) y cuántos terminaron en una
+// venta pagada en TiendaNube — atribución por teléfono + producto dentro de
+// la ventana (ver server/src/services/cartAttribution.js).
+function BotCartStats({ periodQs }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    authFetch(BASE_URL + `/api/stats/carts?${periodQs}`)
+      .then(r => { if (!r.ok) throw new Error(`Error ${r.status}`); return r.json(); })
+      .then(setData)
+      .catch(err => setError(err.message));
+  }, [periodQs]);
+
+  if (error) return <section className={styles.section}><h2 className={styles.sectionTitle}>Carritos del bot</h2><p className={styles.empty}>No se pudieron cargar los carritos ({error}).</p></section>;
+  if (!data) return null;
+
+  const shown = showAll ? data.carts : data.carts.slice(0, 10);
+  return (
+    <section className={styles.section}>
+      <h2 className={styles.sectionTitle}>Carritos del bot</h2>
+      <p className={styles.labelHint}>
+        Carritos que armó el bot en el período. Cuenta como comprado si ese mismo número de WhatsApp pagó un pedido con alguno de esos productos dentro de los {data.windowDays} días.
+      </p>
+      <div className={styles.kpiRow4}>
+        <KpiCard title="Carritos creados" value={data.created} sub={data.created ? `${fmtMoney(data.cartsTotal)} en carritos` : undefined} />
+        <KpiCard title="Comprados" value={data.purchased} sub={data.pending ? `${data.pending} todavía pueden comprar` : undefined} accent="var(--color-status-resolved)" />
+        <KpiCard title="Conversión" value={`${data.conversionPct}%`} sub="carritos que terminaron en venta" />
+        <KpiCard title="Vendido" value={fmtMoney(data.salesTotal)} sub="total de esos pedidos" />
+      </div>
+      {data.carts.length === 0 ? (
+        <p className={styles.empty}>El bot no armó carritos en este período.</p>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total carrito</th><th>Estado</th><th>Pedido</th></tr>
+            </thead>
+            <tbody>
+              {shown.map(c => (
+                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/conversations?open=${encodeURIComponent(c.contactId)}`)}>
+                  <td>{fmtActivity(c.createdAt)}</td>
+                  <td>{c.contactId}</td>
+                  <td>{c.items.map(i => `${i.quantity} x ${i.name}`).join(', ')}</td>
+                  <td>{fmtMoney(c.total)}</td>
+                  <td style={{ color: CART_STATUS[c.status]?.color, fontWeight: 600 }}>{CART_STATUS[c.status]?.label ?? c.status}</td>
+                  <td>{c.orderNumber ? `#${c.orderNumber} · ${fmtMoney(c.orderTotal)}` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.carts.length > 10 && (
+            <button type="button" className={styles.labelMore} onClick={() => setShowAll(v => !v)}>
+              {showAll ? 'Ver menos' : `Ver los ${data.carts.length}`}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import admin from 'firebase-admin';
 import { getDb } from '../services/firebase.service.js';
 import { requireAuth } from '../middleware/requireAuth.js';
+import { getBotCartStats, reconcileBotCarts } from '../services/botCart.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -362,6 +363,20 @@ router.get('/', async (req, res) => {
 
 // Conversaciones de una etiqueta en el período — mismo criterio que labelCounts
 // (actividad, updatedAt, dentro del rango), así la lista coincide con el número.
+// Carritos armados por el bot y cuántos terminaron en venta. Antes de
+// responder cruza los pendientes con TiendaNube (si falla, muestra lo último
+// que se sabe en vez de romper la pantalla).
+router.get('/carts', async (req, res) => {
+  try {
+    const { start, end } = getPeriodRange(req.query.period ?? 'week', req.query.from, req.query.to);
+    await reconcileBotCarts({ maxAgeMs: 5 * 60 * 1000 }).catch(err => console.error('[stats] cruce de carritos:', err.message));
+    res.json(await getBotCartStats(start, end));
+  } catch (err) {
+    console.error('[stats] carritos:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/labels/conversations', async (req, res) => {
   try {
     const label = req.query.label;

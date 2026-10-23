@@ -25,6 +25,7 @@ import mercadolibreWebhookRoutes from './routes/mercadolibre-webhook.routes.js';
 import { seedAgentsIfNeeded } from './services/auth.service.js';
 import { seedAreasIfNeeded } from './services/area.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
+import { reconcileBotCarts } from './services/botCart.service.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -99,5 +100,11 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`[server] BOT-ENTRENO corriendo en puerto ${PORT}`);
 });
+
+// Cada hora: cruza los carritos que armó el bot con los pedidos pagados de
+// TiendaNube (estadística de carritos). Arranca un minuto después de levantar.
+const runCartReconcile = () => reconcileBotCarts().catch(err => console.error('[botCart] Error cruzando carritos:', err.message));
+setTimeout(runCartReconcile, 60 * 1000);
+setInterval(runCartReconcile, 60 * 60 * 1000);
 
 export default app;

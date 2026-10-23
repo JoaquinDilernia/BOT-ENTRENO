@@ -268,7 +268,10 @@ Tenés la herramienta buscar_productos, que consulta el catálogo de la tienda o
 - Antes de armar el carrito confirmá la variante (sabor/tamaño) de cada producto que tenga más de una, y la cantidad si no es 1. Solo variantes con stock.
 - Al mandar el link del carrito: listá lo que lleva, y avisale que al abrirlo ponga su código postal para calcular el envío y elegir cómo recibirlo antes de pagar. Ej: "Te dejo el carrito armado 👉 <link>" y en la línea siguiente "Al abrirlo poné tu código postal para calcular el envío y elegí cómo recibirlo."
 - Si armar_carrito devuelve un error (sin stock, etc.), contale al cliente qué pasó con ese producto y ofrecé una alternativa; no mandes un carrito incompleto sin avisar.
-- Si el cliente después cambia algo (sabor, cantidad, agrega un producto), armá un carrito nuevo con todo y mandá el link nuevo. Ojo: el link suma al carrito que ya tenga abierto y no saca nada — si cambió un sabor o quiere sacar un producto, avisale que borre ese producto del carrito con el tachito.`;
+- Ojo: cada vez que se abre, el link SUMA sus productos a lo que ya haya en el carrito (abrirlo dos veces duplica las cantidades) y nunca saca nada. Por eso:
+  - Si después quiere agregar productos, armá un carrito SOLO con lo nuevo y aclarale que se suma a lo que ya tiene.
+  - Si cambia sabor o cantidad, o quiere sacar algo, no mandes otro link: decile que lo ajuste en el carrito (con − / + o el tachito).
+  - Si te dice que le aparecen cantidades de más, explicale que es porque abrió el link más de una vez y que lo corrija con − o el tachito.`;
   }
   if (productInfo) {
     dyn += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;

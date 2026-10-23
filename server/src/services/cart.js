@@ -11,6 +11,13 @@ const MAX_QTY = 20;
 const nameOf = p => (typeof p.name === 'string' ? p.name : (p.name?.es ?? p.name?.en ?? Object.values(p.name ?? {})[0] ?? 'Producto'));
 const variantLabel = v => (v.values ?? []).map(val => val?.es ?? val?.en ?? Object.values(val ?? {})[0]).filter(Boolean).join(' / ');
 
+// Precio que paga el cliente: el promocional si es menor al de lista.
+function unitPrice(variant) {
+  const price = Number(variant.price) || 0;
+  const promo = Number(variant.promotional_price);
+  return promo > 0 && promo < price ? promo : price;
+}
+
 export function hasStock(variant) {
   return variant.stock_management === false || variant.stock === null || variant.stock === undefined || variant.stock > 0;
 }
@@ -32,7 +39,7 @@ export function buildCartLink(storeUrl, items) {
  *
  * @param {Array<{ producto_id: number, variante_id: number, cantidad: number }>} rawItems
  * @param {(productId: number) => Promise<object|null>} getProduct
- * @returns {Promise<{ link: string, detalle: string[] } | { error: string }>}
+ * @returns {Promise<{ link: string, detalle: string[], items: object[], total: number } | { error: string }>}
  */
 export async function createCartLink(rawItems, getProduct) {
   if (!Array.isArray(rawItems) || !rawItems.length) return { error: 'No hay productos para armar el carrito.' };
@@ -53,6 +60,7 @@ export async function createCartLink(rawItems, getProduct) {
 
   const products = new Map();
   const detalle = [];
+  const items = []; // para registrar el carrito (estadística de carritos)
   const problemas = [];
   let storeUrl = null;
 
@@ -70,9 +78,11 @@ export async function createCartLink(rawItems, getProduct) {
     }
     if (!storeUrl && product.canonical_url) storeUrl = new URL(product.canonical_url).origin;
     detalle.push(`${item.quantity} x ${label}`);
+    items.push({ productId: item.productId, variantId: item.variantId, quantity: item.quantity, name: label, unitPrice: unitPrice(variant) });
   }
 
   if (problemas.length) return { error: `No se armó el carrito: ${problemas.join(' ')}` };
   if (!storeUrl) return { error: 'No se pudo obtener la URL de la tienda.' };
-  return { link: buildCartLink(storeUrl, [...merged.values()]), detalle };
+  const total = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+  return { link: buildCartLink(storeUrl, [...merged.values()]), detalle, items, total };
 }
