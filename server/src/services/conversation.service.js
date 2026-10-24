@@ -163,6 +163,10 @@ export async function dispatchConversation(contactId, patch) {
       // Conversation transitioning to human-handled — record escalation time
       update.escalatedAt = new Date();
       update.firstAgentResponseAt = null; // reset for this escalation cycle
+      // Por qué pasó a humano (categorías en escalationReasons.js). Se pisa en
+      // cada derivación.
+      update.escalationReason = patch.escalationReason ?? null;
+      update.escalationDetail = patch.escalationDetail ?? null;
     }
     if (patch.humanMode === false) {
       update.waitingSince = null;

@@ -1,3 +1,4 @@
+import { parseReasonMarker } from './escalationReasons.js';
 import { generateBotResponse } from './claude.service.js';
 import { endsWithQuestion } from './closeGuard.js';
 import { getKnowledgeBasePrompt } from './knowledge.service.js';
@@ -448,7 +449,8 @@ async function processIncomingMessageInternal(msg) {
   }
   console.log(`[bot] Claude respondió (${botReply.length} chars) para ${from}`);
 
-  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, areas);
+  const { reason: escalationReason, detail: escalationDetail, cleanText: textAfterReason } = parseReasonMarker(botReply);
+  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(textAfterReason, areas);
   const { shouldClose: closeMarker, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
   const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
@@ -502,6 +504,8 @@ async function processIncomingMessageInternal(msg) {
       status: 'escalated',
       humanMode: true,
       assignedTo: assignTo ?? null,
+      escalationReason: escalationReason ?? 'otro',
+      escalationDetail,
     });
     console.log(`[bot] Escalando ${from} → área: ${assignTo ?? 'sin asignar'}`);
 

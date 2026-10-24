@@ -389,3 +389,12 @@
 .tileFlat { background: var(--color-bg); }
 .rowLink { cursor: pointer; }
 .rowLink:hover td { background: var(--soft); }
+
+/* Motivos de derivación */
+.reasonGroup + .reasonGroup { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.reasonGroupTitle { margin: 0 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--brand-ink); }
+.reasonGroupTitle small { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--mute); }
+.reasonRow { width: 100%; background: none; border: none; padding: 4px 6px; margin: 0 -6px 6px; border-radius: 8px; font: inherit; color: inherit; text-align: left; cursor: pointer; box-sizing: content-box; }
+.reasonRow:hover, .reasonRowOpen { background: var(--soft); }
+.reasonRow:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.reasonConvs { margin-left: 2px; }

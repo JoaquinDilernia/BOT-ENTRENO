@@ -1,4 +1,5 @@
 import { isWithinConfiguredHoursAt } from './businessHours.js';
+import { ESCALATION_REASONS } from './escalationReasons.js';
 
 // El negocio opera en Argentina (UTC-3 fijo, sin horario de verano desde 2009).
 // Los "días" de las estadísticas (períodos y desglose diario) deben calcularse
@@ -98,6 +99,8 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
   }
 
   let escalatedCount = 0;
+  // Motivos de las derivaciones del período (escalationReason; las viejas no lo tienen).
+  const reasonMap = {};
   let conversationsStarted = 0;
   let resolvedByBot = 0;
   let resolvedByAgent = 0;
@@ -157,6 +160,10 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
     // Escalación: sólo las ocurridas dentro del rango
     if (isInRange(conv.escalatedAt, startMs, endMs)) {
       escalatedCount++;
+      const reasonKey = conv.escalationReason ?? 'sin_dato';
+      const rb = (reasonMap[reasonKey] ??= { count: 0, examples: [] });
+      rb.count++;
+      rb.examples.push({ id: conv.id ?? null, name: conv.contactName ?? null, detail: conv.escalationDetail ?? null, at: toDate(conv.escalatedAt).toISOString() });
       const dKey = isoDate(toDate(conv.escalatedAt));
       dayBucket(dKey).escalated++;
 
@@ -214,6 +221,16 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
     }
   }
 
+  const byReason = Object.entries(reasonMap)
+    .map(([reason, b]) => ({
+      reason,
+      label: ESCALATION_REASONS[reason] ?? (reason === 'sin_dato' ? 'Sin motivo registrado (derivaciones anteriores al cambio)' : reason),
+      team: reason.startsWith('equipo_'),
+      count: b.count,
+      examples: b.examples.sort((x, y) => y.at.localeCompare(x.at)).slice(0, 30),
+    }))
+    .sort((a, b) => b.count - a.count);
+
   // --- Derived metrics ---
   const total = conversations.length;
   const resolved = resolvedByBot + resolvedByAgent;
@@ -270,6 +287,7 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
     resolvedByAgent,
     botResolutionRate,
     escalatedCount,
+    byReason,
     escalationRate,
     avgFirstResponseMin,
     avgResolutionMin,

@@ -1,3 +1,4 @@
+import { reasonPromptLines } from './escalationReasons.js';
 import https from 'https';
 import { getDb } from './firebase.service.js';
 
@@ -32,6 +33,10 @@ function buildEscalationInstructions(areas = []) {
     return `
 IMPORTANTE — ESCALADA: Si la consulta requiere atención humana y no podés resolverla, usá el marcador [ESCALAR] en una línea separada.
 
+IMPORTANTE — MOTIVO DE LA DERIVACIÓN: Cada vez que derivás, agregá también en una línea separada [MOTIVO:categoria|detalle], donde detalle es una frase corta (máx. 12 palabras) y categoria es una de estas:
+${reasonPromptLines()}
+Ejemplo: "[MOTIVO:pedido_envio|el pedido 1234 no llegó y pasaron 10 días]". El cliente no lo ve.
+
 IMPORTANTE — CIERRE: Si la consulta está completamente resuelta y el cliente se despidió, empezá tu respuesta con [CERRAR]. Si tu respuesta termina con una pregunta, NO uses [CERRAR] — estás esperando que el cliente conteste.
 Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando quieras."`;
   }
@@ -48,6 +53,10 @@ El texto de tu respuesta (antes o después del marcador) es lo que le llega al c
 Ejemplo correcto:
 "Dale, te paso con el equipo que te puede ayudar mejor con esto. Puede tardar unos minutos, ¡pero te van a responder enseguida!
 [ESCALAR_${areas[0].id.toUpperCase()}]"
+
+IMPORTANTE — MOTIVO DE LA DERIVACIÓN: Cada vez que derivás, agregá también en una línea separada [MOTIVO:categoria|detalle], donde detalle es una frase corta (máx. 12 palabras) y categoria es una de estas:
+${reasonPromptLines()}
+Ejemplo: "[MOTIVO:pedido_envio|el pedido 1234 no llegó y pasaron 10 días]". El cliente no lo ve.
 
 IMPORTANTE — CIERRE: Si la consulta está completamente resuelta y el cliente se despidió, empezá tu respuesta con [CERRAR].
 Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando quieras."

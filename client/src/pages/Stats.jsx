@@ -272,6 +272,8 @@ function StatsBody({ data, botName, animate, qs }) {
         <AgentCard byAgent={data.byAgent ?? []} total={total} botName={botName} />
       </div>
 
+      {data.byReason?.length > 0 && <ReasonStats key={`why-${qs}`} byReason={data.byReason} botName={botName} />}
+
       {data.labelCounts?.length > 0 && (
         <LabelStats key={qs} labels={data.labelCounts} total={total} periodQs={qs} />
       )}
@@ -644,6 +646,80 @@ function LabelStats({ labels, total, periodQs }) {
           {showAll ? 'Ver menos' : `Ver todas (${matches.length})`}
         </button>
       )}
+    </section>
+  );
+}
+
+// Por qué se derivaron las charlas del período: lo que el bot no pudo
+// resolver (con el motivo que eligió al derivar) separado de lo que el equipo
+// tomó o arrancó por su cuenta. Tocá un motivo para ver las charlas.
+function ReasonStats({ byReason, botName }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(null);
+  const groups = [
+    { key: 'bot',  title: `Derivó ${botName}`, hint: 'no lo pudo resolver solo', items: byReason.filter(r => !r.team && r.reason !== 'sin_dato') },
+    { key: 'team', title: 'Lo tomó el equipo', hint: 'plantillas, mensajes o tomas manuales', items: byReason.filter(r => r.team) },
+    { key: 'old',  title: 'Sin motivo', hint: 'derivadas antes de que se empezara a registrar', items: byReason.filter(r => r.reason === 'sin_dato') },
+  ].filter(g => g.items.length);
+  const max = Math.max(...byReason.map(r => r.count), 1);
+
+  return (
+    <section className={`${styles.card} anim-rise`} style={{ '--d': '600ms' }}>
+      <div className={styles.cardHead}><h2 className={styles.cardTitle}>Motivos de derivación</h2><small>derivadas en el período</small></div>
+      <p className={styles.labelHint}>Tocá un motivo para ver las conversaciones y el detalle que anotó {botName}.</p>
+      {groups.map(g => (
+        <div key={g.key} className={styles.reasonGroup}>
+          <p className={styles.reasonGroupTitle}>
+            {g.title} <small>· {g.items.reduce((s, r) => s + r.count, 0)} · {g.hint}</small>
+          </p>
+          {g.items.map((r, i) => {
+            const isOpen = open === r.reason;
+            return (
+              <div key={r.reason}>
+                <button
+                  type="button"
+                  className={`${styles.hb} ${styles.reasonRow} ${isOpen ? styles.reasonRowOpen : ''}`}
+                  onClick={() => setOpen(isOpen ? null : r.reason)}
+                  aria-expanded={isOpen}
+                >
+                  <div className={styles.hbName}><span>{r.label}</span></div>
+                  <div className={styles.hbTrack}>
+                    <i
+                      className={`${styles.hbFill} anim-grow-x`}
+                      style={{
+                        width: `${(r.count / max) * 100}%`,
+                        background: g.key === 'bot'
+                          ? `color-mix(in srgb, var(--brand) ${Math.max(100 - i * 14, 35)}%, white)`
+                          : 'color-mix(in srgb, var(--mute) 55%, white)',
+                        '--d': `${680 + Math.min(i * 50, 300)}ms`,
+                      }}
+                    />
+                  </div>
+                  <b>{r.count}</b>
+                </button>
+                {isOpen && (
+                  <ul className={`${styles.labelConvs} ${styles.reasonConvs}`}>
+                    {r.examples.map((c, j) => (
+                      <li key={`${c.id}-${j}`} className={styles.labelConv}>
+                        <span className={styles.labelConvName}>{c.name || c.id}</span>
+                        <span className={styles.labelConvMeta}>{c.detail || '—'}</span>
+                        <span className={styles.labelConvMeta}>{fmtActivity(c.at)}</span>
+                        {c.id && (
+                          <button type="button" className={styles.labelConvOpen}
+                            onClick={() => navigate(`/conversations?open=${encodeURIComponent(c.id)}`)}>
+                            Abrir
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                    {r.count > r.examples.length && <li className={styles.labelConvsMsg}>…y {r.count - r.examples.length} más</li>}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </section>
   );
 }

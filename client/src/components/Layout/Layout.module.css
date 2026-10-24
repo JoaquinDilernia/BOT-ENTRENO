@@ -20,7 +20,8 @@
 /* El colapsado a solo-íconos es una preferencia de escritorio — se aplica
    solo a partir de 769px; en mobile el texto siempre se muestra completo. */
 @media (min-width: 769px) {
-  .sidebarCollapsed { width: 68px; }
+  /* .sidebar.sidebarCollapsed: le gana al ancho de notebook (200px) de más abajo. */
+  .sidebar.sidebarCollapsed { width: 68px; }
   .sidebarCollapsed .brand { justify-content: center; padding: var(--space-2) 0 var(--space-3); }
   .sidebarCollapsed .brandText { display: none; }
   .sidebarCollapsed .navItem { justify-content: center; padding: var(--space-2); }
