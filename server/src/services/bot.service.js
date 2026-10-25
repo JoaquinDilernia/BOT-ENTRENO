@@ -13,7 +13,8 @@ import {
   setUrgentFlag,
   addLabelToConversation,
 } from './conversation.service.js';
-import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64 } from './meta.service.js';
+import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64, downloadMetaMedia } from './meta.service.js';
+import { transcribeAudio } from './transcription.service.js';
 import { getOrCreateCustomer, buildCustomerContext, linkCustomerFromOrder, addTagsToCustomer, listAllTags } from './customer.service.js';
 import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveAreas } from './area.service.js';
@@ -260,7 +261,8 @@ function resolveReplyTo(history, replyToWaMsgId) {
 }
 
 async function processIncomingMessageInternal(msg) {
-  const { channel, from, text, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
+  const { channel, from, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
+  let { text } = msg; // un audio transcripto pasa a ser el texto del mensaje
   // Datos del adjunto que se guardan junto al mensaje para que el panel pueda
   // mostrarlo (nombre del archivo, tipo, y la URL de CDN si vino de Instagram).
   const mediaFields = {
@@ -334,7 +336,19 @@ async function processIncomingMessageInternal(msg) {
   }
 
   // --- Non-text type handling ---
+  // Notas de voz: se transcriben y el bot las contesta como texto. Si no se
+  // pudo transcribir, se avisa como antes.
+  let yaGuardado = false;
   if (type === 'audio') {
+    const transcript = await transcribeIncomingAudio({ mediaId, mediaUrl });
+    if (transcript) {
+      await appendMessage(from, { role: 'user', content: '[Audio recibido]', transcript, mediaType: 'audio', ...mediaFields, contactName, messageId, ...(replyTo && { replyTo }) });
+      text = `[Audio transcripto] ${transcript}`;
+      yaGuardado = true;
+      console.log(`[bot] Audio de ${from} transcripto (${transcript.length} chars)`);
+    }
+  }
+  if (type === 'audio' && !yaGuardado) {
     const prevAudios = history.filter(m => m.role === 'user' && m.mediaType === 'audio').length;
     const audioUserMsg = '[Audio recibido]';
     await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', ...mediaFields, contactName, messageId, ...(replyTo && { replyTo }) });
@@ -385,7 +399,7 @@ async function processIncomingMessageInternal(msg) {
     }
     const userContent = text?.trim() ? `[Imagen] ${text}` : '[Imagen recibida]';
     await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', ...mediaFields, contactName, messageId, ...(replyTo && { replyTo }) });
-  } else {
+  } else if (!yaGuardado) {
     if (!text?.trim()) return;
     const isMediaWithCaption = type === 'video' || type === 'sticker';
     await appendMessage(from, {
@@ -737,4 +751,27 @@ async function searchOrderByRef(orderRef, email = null) {
   }
 
   return { orderInfo: null, tnCustomer: null };
+}
+
+// WhatsApp manda el mediaId; Instagram, una URL directa. null si no se pudo
+// transcribir o el audio vino vacío (el llamador cae al aviso de antes).
+async function transcribeIncomingAudio({ mediaId, mediaUrl }) {
+  try {
+    let buffer, mimeType;
+    if (mediaId) {
+      ({ buffer, mimeType } = await downloadMetaMedia(mediaId));
+    } else if (mediaUrl) {
+      const axios = (await import('axios')).default;
+      const res = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
+      buffer = Buffer.from(res.data);
+      mimeType = res.headers['content-type'] || 'audio/mp4';
+    } else {
+      return null;
+    }
+    const transcript = String(await transcribeAudio(buffer, mimeType) ?? '').trim();
+    return transcript || null;
+  } catch (err) {
+    console.error('[bot] No se pudo transcribir el audio:', err.response?.data ?? err.message);
+    return null;
+  }
 }

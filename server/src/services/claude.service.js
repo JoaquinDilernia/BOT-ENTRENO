@@ -326,7 +326,8 @@ function buildMessages(conversationHistory, newMessage, imageData = null) {
     const recent = conversationHistory.slice(-10);
     for (const msg of recent) {
       const role = msg.role === 'user' ? 'user' : 'assistant';
-      messages.push({ role, content: msg.content });
+      const content = msg.transcript ? `[Audio transcripto] ${msg.transcript}` : msg.content;
+      messages.push({ role, content });
     }
   }
   if (imageData) {
