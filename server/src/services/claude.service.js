@@ -224,7 +224,7 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
   prompt += buildEscalationInstructions(areas);
   if (knowledgeBase) {
     prompt += `\n\n--- INFORMACIÓN DE LA EMPRESA ---\n${knowledgeBase}`;
-    prompt += `\n\nIMPORTANTE — USO DE ESTA INFORMACIÓN: Es TU ÚNICA fuente de verdad sobre servicios, precios, procesos y políticas. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente. Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y ofrecé derivar a alguien del equipo.`;
+    prompt += `\n\nIMPORTANTE — USO DE ESTA INFORMACIÓN: Es TU ÚNICA fuente de verdad sobre servicios, precios, procesos y políticas. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente. Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y dale lo más útil que tengas (un link, dónde verlo en la web). Derivá solo si el cliente quiere hablar con alguien o si hace falta que el equipo haga algo.`;
   }
   // Caché de prompt: `prompt` junta lo que es IGUAL para todos los clientes y
   // va en un bloque cacheado (~10% del costo); `dyn` junta lo que cambia por
