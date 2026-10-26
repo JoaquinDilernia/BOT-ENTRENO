@@ -178,7 +178,11 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
     // la conversación necesitó escalar en algún momento o no.
     if (isInRange(conv.resolvedAt, startMs, endMs)) {
       const dKey = isoDate(toDate(conv.resolvedAt));
-      if (conv.escalatedAt) {
+      // Solo cuenta la derivación del ciclo que se cerró (cycleStartedAt se
+      // marca al reabrirse la charla); sin ese campo, cualquier derivación.
+      const cycleStart = conv.cycleStartedAt ? toDate(conv.cycleStartedAt) : null;
+      const escalatedThisCycle = conv.escalatedAt && (!cycleStart || toDate(conv.escalatedAt) >= cycleStart);
+      if (escalatedThisCycle) {
         resolvedByAgent++;
         dayBucket(dKey).resolvedByAgent++;
       } else {

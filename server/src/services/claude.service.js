@@ -156,12 +156,12 @@ export async function generateConversationSummary(messages) {
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
   const {
-    knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null,
+    knowledgeBase = '', orderInfo = null, orderRef = null, orderFromCache = false, stockInfo = null, productInfo = null,
     customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, areas = [],
     tools = [], runTool = null,
   } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, areas, customerTags, tools.length > 0);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, areas, customerTags, tools.length > 0, orderFromCache);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   // Loop de tool-use (mismo patrón que Selvaggio): mientras Claude pida tools,
@@ -206,7 +206,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
 
 const MAX_TOOL_ROUNDS = 4;
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], areas = [], customerTags = [], hasProductTool = false) {
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], areas = [], customerTags = [], hasProductTool = false, orderFromCache = false) {
   const botName = botConfig.botName || 'Entreno';
   const businessName = botConfig.businessName || 'Entreno';
   const personality = botConfig.botPersonality ||
@@ -236,7 +236,9 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
   prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, es porque no hay datos reales, y ahí no podés afirmar ni sugerir que encontraste un pedido, aunque el número se parezca a algo mencionado antes. Si el cliente menciona un pedido/compra y no tenés información del pedido en este prompt, pedile el número de pedido (puede mandarlo con o sin "#", solo el número alcanza) para buscarlo. Si no lo tiene a mano o ya lo buscaste y no apareció, como último recurso pedile el email con el que compró.`;
   if (orderInfo) {
     dyn += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
-    dyn += `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad.`;
+    dyn += orderFromCache
+      ? `\n\nEste es el pedido del que se viene hablando en esta conversación (consultado en Tienda Nube hace un rato). Seguí usándolo con normalidad: no te desdigas de lo que ya le informaste al cliente.`
+      : `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad.`;
     dyn += `\n\nGuía para interpretar el pedido:
 - pago "pagado" + envio "enviado" → en camino, compartí el tracking si hay.
 - pago "pagado" + envio "en preparación" o "pendiente de preparación" → se está preparando, próximamente se envía.

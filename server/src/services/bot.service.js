@@ -301,6 +301,9 @@ async function processIncomingMessageInternal(msg) {
       updateConversationStatus(from, 'bot'),
       updateHumanMode(from, false),
       updateAssignment(from, null),
+      // Arranca un ciclo nuevo: una derivación de una charla anterior no tiene
+      // que hacer que esta cuente como "resuelta por agente" (statsAggregate).
+      getDb().collection('bot-entreno_conversations').doc(from).update({ cycleStartedAt: new Date() }),
     ]);
     conversation.status = 'bot';
     conversation.humanMode = false;
@@ -428,9 +431,14 @@ async function processIncomingMessageInternal(msg) {
       console.error('[bot] linkCustomerFromOrder error:', err.message)
     );
   }
-  if (orderContext.orderRef) {
+  if (orderContext.orderRef && !orderContext.fromCache) {
     getDb().collection('bot-entreno_conversations').doc(from)
-      .update({ lastOrderRef: orderContext.orderRef })
+      .update({
+        lastOrderRef: orderContext.orderRef,
+        // Snapshot para los mensajes siguientes de la charla (ver cachedOrderContext).
+        lastOrderInfo: orderContext.orderInfo ? JSON.stringify(orderContext.orderInfo) : null,
+        lastOrderAt: new Date(),
+      })
       .catch(() => {});
   }
 
@@ -441,6 +449,7 @@ async function processIncomingMessageInternal(msg) {
       knowledgeBase,
       orderInfo: orderContext.orderInfo,
       orderRef: orderContext.orderRef,
+      orderFromCache: !!orderContext.fromCache,
       stockInfo,
       productInfo,
       customerContext,
@@ -726,7 +735,28 @@ async function resolveOrderContext(text, customer, conversation = {}) {
     return { orderInfo: null, tnCustomer: null };
   }
 
+  // Seguimiento de la charla sobre un pedido ya consultado ("porque la otra
+  // vez tardó una semana"): sin esto el prompt no trae el pedido, la regla de
+  // "no inventes pedidos" hace que el bot se desdiga de lo que ya contestó y
+  // termina derivando. Se reusa la última consulta guardada, sin volver a TN.
+  const cached = cachedOrderContext(conversation);
+  if (cached) return cached;
+
   return { orderInfo: null, tnCustomer: null };
+}
+
+const ORDER_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+
+function cachedOrderContext(conversation = {}) {
+  const { lastOrderRef, lastOrderInfo, lastOrderAt } = conversation;
+  if (!lastOrderRef || !lastOrderInfo || !lastOrderAt) return null;
+  const at = lastOrderAt?.toDate ? lastOrderAt.toDate() : new Date(lastOrderAt);
+  if (!(Date.now() - at.getTime() < ORDER_CACHE_TTL_MS)) return null;
+  try {
+    return { orderInfo: JSON.parse(lastOrderInfo), orderRef: lastOrderRef, tnCustomer: null, fromCache: true };
+  } catch {
+    return null;
+  }
 }
 
 async function searchOrderByRef(orderRef, email = null) {
