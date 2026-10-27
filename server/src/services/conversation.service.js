@@ -41,11 +41,42 @@ export async function getOrCreateConversation(contactId, channel, contactName = 
   return { id: contactId, ...newConversation };
 }
 
-export async function appendMessage(contactId, message) {
-  const db = getDb();
-  const docRef = db.collection(COLLECTION).doc(contactId);
+// Todo lo que reescribe el array `messages` entero tiene que pasar por acá.
+// Sin transacción, un recibo de entrega de Meta que llega mientras el cliente
+// escribe lee el array viejo y lo escribe encima: el mensaje del cliente se
+// pierde (pasó en producción con una propuesta de proveedor — el agente veía
+// solo "buenas" y una derivación sin motivo). `mutate` devuelve el update a
+// aplicar, o null si no hay nada que cambiar.
+// Las escrituras de un mismo contacto se encolan en el proceso: muchas
+// transacciones a la vez sobre el mismo doc hacen que Firestore las aborte por
+// contención. La transacción queda igual por si corre más de una instancia.
+const writeQueues = new Map();
 
-  const doc = await docRef.get();
+function updateConversationTx(contactId, mutate) {
+  const previous = writeQueues.get(contactId) ?? Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() => {
+      const db = getDb();
+      const docRef = db.collection(COLLECTION).doc(contactId);
+      return db.runTransaction(async tx => {
+        const doc = await tx.get(docRef);
+        const update = mutate(doc);
+        if (update) tx.update(docRef, update);
+      }, { maxAttempts: 10 });
+    })
+    .finally(() => {
+      if (writeQueues.get(contactId) === current) writeQueues.delete(contactId);
+    });
+  writeQueues.set(contactId, current);
+  return current;
+}
+
+export async function appendMessage(contactId, message) {
+  await updateConversationTx(contactId, doc => buildAppendUpdate(doc, contactId, message));
+}
+
+function buildAppendUpdate(doc, contactId, message) {
   const docData = doc.exists ? doc.data() : {};
   const current = docData.messages ?? [];
   const { messageId, ...rest } = message;
@@ -85,7 +116,7 @@ export async function appendMessage(contactId, message) {
     }
   }
 
-  await docRef.update({ messages: updated, updatedAt: new Date(), ...extra });
+  return { messages: updated, updatedAt: new Date(), ...extra };
 }
 
 export async function getConversationHistory(contactId) {
@@ -201,29 +232,28 @@ export async function markAsRead(contactId) {
 
 // Update a specific message's delivery status by local msgId
 export async function updateMessageStatus(contactId, msgId, newStatus, waMsgId = null) {
-  const db = getDb();
-  const docRef = db.collection(COLLECTION).doc(contactId);
-  const doc = await docRef.get();
-  if (!doc.exists) return;
-  const messages = doc.data().messages ?? [];
-  const updated = messages.map(m => {
-    if (m.msgId !== msgId) return m;
-    const result = { ...m, msgStatus: newStatus };
-    if (waMsgId) result.waMsgId = waMsgId;
-    return result;
+  await updateConversationTx(contactId, doc => {
+    if (!doc.exists) return null;
+    const messages = doc.data().messages ?? [];
+    if (!messages.some(m => m.msgId === msgId)) return null;
+    const updated = messages.map(m => {
+      if (m.msgId !== msgId) return m;
+      const result = { ...m, msgStatus: newStatus };
+      if (waMsgId) result.waMsgId = waMsgId;
+      return result;
+    });
+    return { messages: updated };
   });
-  await docRef.update({ messages: updated });
 }
 
 // Update a specific message's transcript by mediaId (audios entrantes no tienen msgId)
 export async function setMessageTranscript(contactId, mediaId, transcript) {
-  const db = getDb();
-  const docRef = db.collection(COLLECTION).doc(contactId);
-  const doc = await docRef.get();
-  if (!doc.exists) return;
-  const messages = doc.data().messages ?? [];
-  const updated = messages.map(m => m.mediaId === mediaId ? { ...m, transcript } : m);
-  await docRef.update({ messages: updated });
+  await updateConversationTx(contactId, doc => {
+    if (!doc.exists) return null;
+    const messages = doc.data().messages ?? [];
+    if (!messages.some(m => m.mediaId === mediaId)) return null;
+    return { messages: messages.map(m => m.mediaId === mediaId ? { ...m, transcript } : m) };
+  });
 }
 
 // Update a specific message's delivery status by WA message ID (for webhook
@@ -237,23 +267,26 @@ const STATUS_RANK = { sending: 0, sent: 1, delivered: 2, read: 3 };
 
 export async function updateMessageStatusByWaMsgId(contactId, waMsgId, newStatus, msgError = null) {
   if (!contactId) return;
-  const db = getDb();
-  const docRef = db.collection(COLLECTION).doc(contactId);
-  const doc = await docRef.get();
-  if (!doc.exists) return;
-  const messages = doc.data().messages ?? [];
-  const updated = messages.map(m => {
-    if (m.waMsgId !== waMsgId) return m;
-    // No pisar un estado más avanzado si el webhook llega desordenado
-    // (ej. 'delivered' después de 'read') — 'error' es terminal y siempre gana.
-    if (newStatus !== 'error') {
-      const currentRank = STATUS_RANK[m.msgStatus] ?? 0;
-      const nextRank = STATUS_RANK[newStatus] ?? 0;
-      if (nextRank < currentRank) return m;
-    }
-    return { ...m, msgStatus: newStatus, ...(msgError && { msgError: String(msgError).slice(0, 300) }) };
+  await updateConversationTx(contactId, doc => {
+    if (!doc.exists) return null;
+    const messages = doc.data().messages ?? [];
+    let changed = false;
+    const updated = messages.map(m => {
+      if (m.waMsgId !== waMsgId) return m;
+      // No pisar un estado más avanzado si el webhook llega desordenado
+      // (ej. 'delivered' después de 'read') — 'error' es terminal y siempre gana.
+      if (newStatus !== 'error') {
+        const currentRank = STATUS_RANK[m.msgStatus] ?? 0;
+        const nextRank = STATUS_RANK[newStatus] ?? 0;
+        if (nextRank < currentRank) return m;
+      }
+      changed = true;
+      return { ...m, msgStatus: newStatus, ...(msgError && { msgError: String(msgError).slice(0, 300) }) };
+    });
+    // La mayoría de los recibos son de mensajes del bot, que no guardan
+    // waMsgId: no hay nada que escribir.
+    return changed ? { messages: updated } : null;
   });
-  await docRef.update({ messages: updated });
 }
 
 function mapConversationDoc(doc, data) {
