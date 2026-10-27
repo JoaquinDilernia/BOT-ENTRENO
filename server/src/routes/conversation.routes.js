@@ -35,6 +35,7 @@ import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
 import { generateConversationSummary } from '../services/claude.service.js';
 import { toWaContactId } from '../services/phone.js';
+import { agentSendPatch } from '../services/agentSend.js';
 
 const router = Router();
 // 100 MB = tope de WhatsApp para documentos. Los topes por tipo (5 MB imagen,
@@ -313,14 +314,14 @@ router.post('/:contactId/reply', async (req, res) => {
     const doc = await db.collection('bot-entreno_conversations').doc(contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
 
-    const { channel, status } = doc.data();
+    const { channel } = doc.data();
 
-    // Si la conversación estaba archivada/resuelta, un agente escribiéndole
-    // directo la reabre — si no, queda invisible en Archivados mientras la
-    // charla sigue (ver docs/superpowers/specs/2026-08-11-fix-reapertura-archivados-design.md)
-    if (status === 'resolved' || status === 'bot_archived') {
-      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email, escalationReason: 'equipo_inicio' });
-    }
+    // Un agente escribiéndole al cliente toma la conversación: reabre la
+    // archivada (si no, queda invisible en Archivados — ver
+    // docs/superpowers/specs/2026-08-11-fix-reapertura-archivados-design.md)
+    // y pausa al bot si estaba respondiendo él (ver agentSend.js).
+    const takePatch = agentSendPatch(doc.data(), req.agent.email);
+    if (takePatch) await dispatchConversation(contactId, takePatch);
 
     // Generate a local message ID for tracking delivery status
     const msgId = crypto.randomUUID();
@@ -453,7 +454,7 @@ router.post('/:contactId/media', uploadSingle('file'), async (req, res) => {
     const db = getDb();
     const doc = await db.collection('bot-entreno_conversations').doc(contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
-    const { channel, status } = doc.data();
+    const { channel } = doc.data();
 
     // Antes un archivo a Instagram se guardaba como "enviado" sin mandarse
     // nunca — la API de IG sólo acepta adjuntos por URL pública.
@@ -483,11 +484,10 @@ router.post('/:contactId/media', uploadSingle('file'), async (req, res) => {
       console.error('[media] Error enviando media:', sendError);
     }
 
-    // Mismo criterio que en /reply: mandar un archivo a una conversación
-    // archivada la reabre, en vez de dejarla invisible en Archivados.
-    if (status === 'resolved' || status === 'bot_archived') {
-      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email, escalationReason: 'equipo_inicio' });
-    }
+    // Mismo criterio que en /reply: el agente que manda un archivo toma la
+    // conversación (la reabre si estaba archivada, pausa al bot si no).
+    const takePatch = agentSendPatch(doc.data(), req.agent.email);
+    if (takePatch) await dispatchConversation(contactId, takePatch);
 
     const fallbackType = req.file.mimetype.startsWith('audio/') ? 'audio'
       : req.file.mimetype.startsWith('video/') ? 'video'
@@ -577,7 +577,7 @@ router.post('/forward', async (req, res) => {
     for (const contactId of targets) {
       const doc = await db.collection('bot-entreno_conversations').doc(contactId).get();
       if (!doc.exists) { results.push({ contactId, ok: false, error: 'Conversación no encontrada' }); continue; }
-      const { channel, status, lastClientMessageAt, contactName } = doc.data();
+      const { channel, lastClientMessageAt, contactName } = doc.data();
       const name = contactName || contactId;
 
       if (channel === 'whatsapp' && (!lastClientMessageAt || Date.now() - tsMs(lastClientMessageAt) > WINDOW_MS)) {
@@ -627,9 +627,8 @@ router.post('/forward', async (req, res) => {
         }
       }
 
-      if (sentCount > 0 && (status === 'resolved' || status === 'bot_archived')) {
-        await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email, escalationReason: 'equipo_inicio' });
-      }
+      const takePatch = sentCount > 0 ? agentSendPatch(doc.data(), req.agent.email) : null;
+      if (takePatch) await dispatchConversation(contactId, takePatch);
       results.push({ contactId, name, ok: !firstError, sent: sentCount, ...(firstError && { error: firstError }) });
     }
 
