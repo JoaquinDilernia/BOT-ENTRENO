@@ -1,4 +1,5 @@
 import { reasonPromptLines } from './escalationReasons.js';
+import { historyToMessages, AGENT_PREFIX } from './historyMessages.js';
 import https from 'https';
 import { getDb } from './firebase.service.js';
 
@@ -222,6 +223,7 @@ Nunca inventás información sobre productos, precios, stock, pedidos, envíos o
   prompt += `\n\nREGLA — SOLO ASISTÍS, NO VENDÉS: Por este chat no se vende, no se reservan ni se apartan productos y no se toman pedidos. Las compras se hacen únicamente en la web (entreno.com.ar). Nunca ofrezcas reservar, separar, guardar o "anotar" un producto, ni tomar un pedido por acá — si el cliente quiere comprar, mandale el link del producto o, si tenés la herramienta armar_carrito, el link del carrito armado: la compra igual la termina él en la web.`;
   prompt += `\n\nFORMATO: Escribís para WhatsApp. Para negrita usá UN solo asterisco (*así*), nunca dos (**así**) — no uses títulos con # ni otro markdown.`;
   prompt += buildEscalationInstructions(areas);
+  prompt += `\n\nIMPORTANTE — MENSAJES DEL EQUIPO: Los mensajes que empiezan con "${AGENT_PREFIX}" los escribió alguien del equipo, no vos. Tomá lo que dicen como hecho (si dicen que ya resolvieron algo, está resuelto). Si el cliente solo agradece o confirma algo que el equipo ya resolvió, no vuelvas a derivar: respondé corto y cerrá con [CERRAR]. Nunca repitas ese prefijo en tu respuesta.`;
   if (knowledgeBase) {
     prompt += `\n\n--- INFORMACIÓN DE LA EMPRESA ---\n${knowledgeBase}`;
     prompt += `\n\nIMPORTANTE — USO DE ESTA INFORMACIÓN: Es TU ÚNICA fuente de verdad sobre servicios, precios, procesos y políticas. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente. Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y dale lo más útil que tengas (un link, dónde verlo en la web). Derivá solo si el cliente quiere hablar con alguien o si hace falta que el equipo haga algo.`;
@@ -323,15 +325,7 @@ Categorías (basadas en el catálogo real de Entreno):
 }
 
 function buildMessages(conversationHistory, newMessage, imageData = null) {
-  const messages = [];
-  if (conversationHistory?.length) {
-    const recent = conversationHistory.slice(-10);
-    for (const msg of recent) {
-      const role = msg.role === 'user' ? 'user' : 'assistant';
-      const content = msg.transcript ? `[Audio transcripto] ${msg.transcript}` : msg.content;
-      messages.push({ role, content });
-    }
-  }
+  const messages = historyToMessages(conversationHistory ?? []);
   if (imageData) {
     messages.push({
       role: 'user',
