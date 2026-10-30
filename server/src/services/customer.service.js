@@ -254,6 +254,29 @@ function mapCustomerDoc(doc) {
   };
 }
 
+// Cache en memoria: el panel admin pide esta lista COMPLETA en cada carga y
+// en cada cambio de filtro de la pantalla "Clientes" (los filtros se aplican
+// en JS, no en la query), y sin cache eso es un scan completo de la colección
+// de contactos (6k+ docs) por click. Mismo criterio que `_tagsCache`. No se
+// invalida con el touch de `lastContactAt` en cada mensaje entrante (anularía
+// el cache); sí en las altas/bajas/ediciones/importaciones/sync, donde 60s de
+// demora es imperceptible.
+let _customersCache = { at: 0, docs: null };
+const CUSTOMERS_CACHE_MS = 60 * 1000;
+
+export function invalidateCustomersCache() { _customersCache = { at: 0, docs: null }; }
+
+async function fetchAllCustomerDocs() {
+  if (_customersCache.docs && Date.now() - _customersCache.at < CUSTOMERS_CACHE_MS) {
+    return _customersCache.docs;
+  }
+  const db = getDb();
+  const snap = await db.collection(COLLECTION).get();
+  const docs = snap.docs.map(mapCustomerDoc);
+  _customersCache = { at: Date.now(), docs };
+  return docs;
+}
+
 /**
  * @param {object} filters
  * @param {string}   [filters.q]                nombre / teléfono / email
@@ -269,9 +292,7 @@ function mapCustomerDoc(doc) {
  * @param {number}   [filters.lastOrderMinDays] última compra hace >= N días (recompra)
  */
 export async function listCustomers(filters = {}) {
-  const db = getDb();
-  const snap = await db.collection(COLLECTION).get();
-  let docs = snap.docs.map(mapCustomerDoc);
+  let docs = await fetchAllCustomerDocs();
 
   const num = (v) => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
 
@@ -375,6 +396,7 @@ export async function createCustomer({ contactId, channel, contactName, email, t
     updatedAt: new Date(),
   };
   await docRef.set(customer);
+  invalidateCustomersCache();
   return { id: contactId, ...customer };
 }
 
@@ -386,12 +408,14 @@ export async function updateCustomer(contactId, patch) {
   if (patch.tags !== undefined) update.tags = Array.isArray(patch.tags) ? patch.tags : [];
   if (patch.agentNotes !== undefined) update.agentNotes = patch.agentNotes ?? '';
   await db.collection(COLLECTION).doc(contactId).update(update);
+  invalidateCustomersCache();
   return getCustomerProfile(contactId);
 }
 
 export async function deleteCustomer(contactId) {
   const db = getDb();
   await db.collection(COLLECTION).doc(contactId).delete();
+  invalidateCustomersCache();
 }
 
 // ─────────────────────────── Import / export CSV ──────────────────────────
@@ -499,6 +523,7 @@ export async function importCustomersCsv(rows, { normalizePhone } = {}) {
     }
   }
 
+  invalidateCustomersCache();
   return { created, updated, skipped, errors };
 }
 
@@ -595,5 +620,6 @@ export async function syncAllTiendaNubeCustomers() {
 
   const result = { scanned: groups.length, created, updated, skippedNoPhone };
   console.log(`[customer] Sync Tienda Nube (${((Date.now() - startedAt) / 1000).toFixed(1)}s):`, JSON.stringify(result));
+  invalidateCustomersCache();
   return result;
 }
