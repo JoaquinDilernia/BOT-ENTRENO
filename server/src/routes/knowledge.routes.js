@@ -19,10 +19,10 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { title, content, category, order, active } = req.body;
+    const { title, content, category, order, active, proactive } = req.body;
     if (!title || !content) return res.status(400).json({ error: 'title y content son requeridos' });
 
-    const item = await createKnowledgeItem({ title, content, category, order, active });
+    const item = await createKnowledgeItem({ title, content, category, order, active, proactive });
     res.status(201).json({ item });
   } catch (err) {
     res.status(500).json({ error: err.message });

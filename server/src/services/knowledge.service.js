@@ -18,7 +18,7 @@ export async function getKnowledgeBasePrompt() {
   const sections = snapshot.docs
     .map(doc => doc.data())
     .sort((a, b) => (a.order ?? 99) - (b.order ?? 99))
-    .map(d => `### ${d.title}\n${d.content}`);
+    .map(d => `### ${d.proactive ? '🔥 ' : ''}${d.title}\n${d.content}`);
 
   return sections.join('\n\n');
 }
@@ -65,6 +65,7 @@ export async function createKnowledgeItem(item) {
     ...item,
     active: item.active ?? true,
     order: item.order ?? 99,
+    proactive: item.proactive ?? false,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
