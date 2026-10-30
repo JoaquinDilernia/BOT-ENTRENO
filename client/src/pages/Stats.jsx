@@ -789,7 +789,7 @@ function BotCartStats({ periodQs }) {
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
-              <tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total carrito</th><th>Estado</th><th>Pedido</th></tr>
+              <tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Estado</th><th>Pedido</th></tr>
             </thead>
             <tbody>
               {shown.map(c => (
@@ -800,7 +800,6 @@ function BotCartStats({ periodQs }) {
                   </td>
                   <td>{c.contactId}</td>
                   <td>{c.items.map(i => `${i.quantity} x ${i.name}`).join(', ')}</td>
-                  <td>{fmtMoney(c.total)}</td>
                   <td style={{ color: CART_STATUS[c.status]?.color, fontWeight: 600 }}>{CART_STATUS[c.status]?.label ?? c.status}</td>
                   <td>{c.orderNumber ? `#${c.orderNumber} · ${fmtMoney(c.orderTotal)}` : '—'}</td>
                 </tr>

@@ -95,7 +95,7 @@ export async function getBotCartStats(start, end) {
       createdAt: c.createdAt?.toDate().toISOString() ?? null,
       status: c.status,
       total: c.total ?? 0,
-      items: (c.items ?? []).map(i => ({ name: i.name, quantity: i.quantity })),
+      items: (c.items ?? []).map(i => ({ name: i.name, quantity: i.quantity, unitPrice: i.unitPrice })),
       orderId: c.orderId ?? null,
       orderNumber: c.orderNumber ?? null,
       orderTotal: c.orderTotal ?? null,

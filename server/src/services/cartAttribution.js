@@ -82,8 +82,8 @@ export function assignCartOrders(carts, orders, claimed = new Set()) {
  * Junta en una fila los carritos que el mismo cliente rearmó (le pidió al bot
  * cambios antes de comprar): cada carrito se suma al anterior del mismo
  * contacto si está dentro de la ventana y ese grupo todavía no compró. La fila
- * muestra el último carrito, la venta si la hubo y `rebuilt` = cuántas veces
- * se armó.
+ * junta los productos de todos (a veces el bot arma un carrito por producto),
+ * la venta si la hubo y `rebuilt` = cuántas veces se armó.
  * @param {Array<{ id, contactId, createdAt, status, orderId?, orderCreatedAt? }>} carts
  */
 export function groupCartRebuilds(carts) {
@@ -97,17 +97,21 @@ export function groupCartRebuilds(carts) {
       || (g.sale && time(g.sale.orderCreatedAt) <= time(cart.createdAt))
       || (g.sale && cart.status === 'purchased' && String(cart.orderId) !== String(g.sale.orderId));
     if (closed) {
-      const fresh = { last: cart, sale: null, count: 0 };
+      const fresh = { last: cart, sale: null, count: 0, items: new Map() };
       groups.push(fresh);
       open.set(cart.contactId, fresh);
     }
     const cur = open.get(cart.contactId);
     cur.last = cart;
     cur.count++;
+    // Mismo producto en dos versiones: vale la cantidad de la más nueva.
+    for (const it of cart.items ?? []) cur.items.set(it.name, it);
     if (cart.status === 'purchased' && !cur.sale) cur.sale = cart;
   }
-  return groups.map(({ last, sale, count }) => ({
+  return groups.map(({ last, sale, count, items }) => ({
     ...last,
+    items: [...items.values()],
+    total: count > 1 ? [...items.values()].reduce((s, i) => s + (i.unitPrice ?? 0) * (i.quantity ?? 0), 0) : last.total,
     status: sale ? 'purchased' : last.status,
     orderId: sale?.orderId ?? null,
     orderNumber: sale?.orderNumber ?? null,

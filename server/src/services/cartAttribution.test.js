@@ -65,6 +65,16 @@ test('listado: carritos rearmados por el mismo cliente van en una fila con la ve
   assert.deepEqual([x.id, x.status, x.orderNumber, x.rebuilt], ['c', 'purchased', 501, 3]);
 });
 
+test('listado: un carrito por producto → la fila junta todos los productos y su total', () => {
+  const sale = { status: 'purchased', orderId: 1, orderCreatedAt: '2026-10-29T17:38:00Z' };
+  const [row] = groupCartRebuilds([
+    { id: 'a', contactId: 'X', createdAt: '2026-10-29T16:43:00Z', total: 105170, items: [{ name: 'Whey', quantity: 1, unitPrice: 105170 }], ...sale },
+    { id: 'b', contactId: 'X', createdAt: '2026-10-29T16:55:00Z', total: 11996, items: [{ name: 'MRS', quantity: 1, unitPrice: 11996 }], ...sale },
+  ]);
+  assert.deepEqual(row.items.map(i => i.name), ['Whey', 'MRS']);
+  assert.equal(row.total, 117166);
+});
+
 test('listado: después de comprar, un carrito nuevo es otra fila', () => {
   const rows = groupCartRebuilds([
     { id: 'a', contactId: 'X', createdAt: '2026-10-23T08:00:00Z', status: 'purchased', orderId: 1, orderCreatedAt: '2026-10-23T15:00:00Z' },
