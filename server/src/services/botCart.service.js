@@ -6,7 +6,7 @@
 import admin from 'firebase-admin';
 import { getDb } from './firebase.service.js';
 import { getPaidOrdersSince, setOrderOwnerNote } from './tiendanube.service.js';
-import { findCartOrder, isCartExpired, buildOwnerNote, CART_ATTRIBUTION_DAYS } from './cartAttribution.js';
+import { assignCartOrders, isCartExpired, buildOwnerNote, CART_ATTRIBUTION_DAYS } from './cartAttribution.js';
 
 const COLLECTION = 'bot-entreno_bot_carts';
 
@@ -42,11 +42,16 @@ async function doReconcile() {
   if (!carts.length) return { pending: snap.size, purchased: 0, expired: 0 };
   const oldest = new Date(Math.min(...carts.map(c => c.createdAt.toDate().getTime())));
   const orders = await getPaidOrdersSince(oldest);
+  // Pedidos que ya quedaron atribuidos a otro carrito: no se vuelven a contar.
+  const claimedSnap = await getDb().collection(COLLECTION)
+    .where('orderCreatedAt', '>=', oldest).get();
+  const claimed = new Set(claimedSnap.docs.map(d => String(d.data().orderId)));
+  const assigned = assignCartOrders(carts, orders, claimed);
 
   let purchased = 0, expired = 0;
   const now = new Date();
   for (const cart of carts) {
-    const order = findCartOrder(cart, orders);
+    const order = assigned.get(cart.id);
     if (order) {
       await cart.ref.update({
         status: 'purchased',
@@ -91,6 +96,7 @@ export async function getBotCartStats(start, end) {
         status: c.status,
         total: c.total ?? 0,
         items: (c.items ?? []).map(i => ({ name: i.name, quantity: i.quantity })),
+        orderId: c.orderId ?? null,
         orderNumber: c.orderNumber ?? null,
         orderTotal: c.orderTotal ?? null,
       };
@@ -98,14 +104,17 @@ export async function getBotCartStats(start, end) {
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 
   const count = s => carts.filter(c => c.status === s).length;
-  const purchased = count('purchased');
+  // Un pedido cuenta una sola vez aunque haya carritos viejos atribuidos al mismo.
+  const sales = new Map();
+  for (const c of carts) if (c.status === 'purchased') sales.set(String(c.orderId ?? c.orderNumber), c.orderTotal ?? 0);
+  const purchased = sales.size;
   return {
     created: carts.length,
     purchased,
     pending: count('pending'),
     expired: count('expired'),
     conversionPct: carts.length ? Math.round((purchased / carts.length) * 100) : 0,
-    salesTotal: carts.reduce((s, c) => s + (c.status === 'purchased' ? c.orderTotal ?? 0 : 0), 0),
+    salesTotal: [...sales.values()].reduce((s, t) => s + t, 0),
     cartsTotal: carts.reduce((s, c) => s + c.total, 0),
     windowDays: CART_ATTRIBUTION_DAYS,
     carts,

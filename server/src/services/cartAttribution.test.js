@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findCartOrder, isCartExpired, buildOwnerNote, withCartUtm, OWNER_NOTE_MARK } from './cartAttribution.js';
+import { findCartOrder, assignCartOrders, isCartExpired, buildOwnerNote, withCartUtm, OWNER_NOTE_MARK } from './cartAttribution.js';
 
 const cart = {
   contactId: '5491164212370',
@@ -35,6 +35,23 @@ test('si hay varios pedidos que matchean, toma el primero después del carrito',
   assert.equal(findCartOrder(cart, [later, first])?.number, 501);
 });
 
+test('varios carritos y una sola compra: el pedido va a un solo carrito (el último antes de comprar)', () => {
+  const carts = ['c1', 'c2', 'c3', 'c4'].map((id, i) => ({ ...cart, id, createdAt: new Date(Date.parse('2026-10-23T08:00:00Z') + i * 3600000) }));
+  const assigned = assignCartOrders(carts, [order({ created_at: '2026-10-23T15:00:00+0000' })]);
+  assert.deepEqual([...assigned.keys()], ['c4']);
+});
+
+test('dos compras: cada una a un carrito distinto, y no reusa pedidos ya atribuidos', () => {
+  const c1 = { ...cart, id: 'c1', createdAt: new Date('2026-10-23T08:00:00Z') };
+  const c2 = { ...cart, id: 'c2', createdAt: new Date('2026-10-24T08:00:00Z') };
+  const o1 = order({ id: 1, number: 501, created_at: '2026-10-23T15:00:00+0000' });
+  const o2 = order({ id: 2, number: 502, created_at: '2026-10-24T15:00:00+0000' });
+  const assigned = assignCartOrders([c1, c2], [o1, o2]);
+  assert.equal(assigned.get('c1')?.number, 501);
+  assert.equal(assigned.get('c2')?.number, 502);
+  assert.equal(assignCartOrders([c1], [o1], new Set(['1'])).size, 0);
+});
+
 test('acepta Timestamp de Firestore en createdAt', () => {
   const c = { ...cart, createdAt: { _seconds: Date.parse('2026-10-23T12:00:00Z') / 1000 } };
   assert.equal(findCartOrder(c, [order()])?.number, 500);
@@ -55,7 +72,7 @@ test('nota del pedido: agrega sin pisar y no duplica', () => {
 
 test('UTM del bot en el link del carrito', () => {
   assert.equal(
-    withCartUtm('https://www.entreno.com.ar/cart-link/1-1,2-3'),
-    'https://www.entreno.com.ar/cart-link/1-1,2-3?utm_source=whatsapp&utm_medium=bot&utm_campaign=carrito_bot',
+    withCartUtm('https://altorancho.com/cart-link/1-1,2-3'),
+    'https://altorancho.com/cart-link/1-1,2-3?utm_source=whatsapp&utm_medium=bot&utm_campaign=carrito_bot',
   );
 });

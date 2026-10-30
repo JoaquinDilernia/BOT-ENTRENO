@@ -56,6 +56,28 @@ export function findCartOrder(cart, orders) {
   return candidates[0] ?? null;
 }
 
+/**
+ * Asigna los pedidos a los carritos sin repetir: si el cliente armó varios
+ * carritos y compró una vez, la venta es del último carrito antes de la compra
+ * (si no, el mismo pedido se sumaba una vez por carrito).
+ * @param {Array<{ id: string }>} carts
+ * @param {Array<object>} orders - pedidos crudos de TiendaNube
+ * @param {Set<string>} claimed - ids de pedidos que ya tiene otro carrito
+ * @returns {Map<string, object>} id del carrito → pedido
+ */
+export function assignCartOrders(carts, orders, claimed = new Set()) {
+  const taken = new Set([...claimed].map(String));
+  const result = new Map();
+  const newestFirst = [...carts].sort((a, b) => (toDate(b.createdAt) ?? 0) - (toDate(a.createdAt) ?? 0));
+  for (const cart of newestFirst) {
+    const order = findCartOrder(cart, orders.filter(o => !taken.has(String(o.id))));
+    if (!order) continue;
+    taken.add(String(order.id));
+    result.set(cart.id, order);
+  }
+  return result;
+}
+
 /** El carrito ya no puede atribuirse a ninguna venta. */
 export function isCartExpired(cart, now = new Date()) {
   const created = toDate(cart.createdAt);
