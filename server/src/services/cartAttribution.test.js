@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findCartOrder, assignCartOrders, isCartExpired, buildOwnerNote, withCartUtm, OWNER_NOTE_MARK } from './cartAttribution.js';
+import { findCartOrder, assignCartOrders, groupCartRebuilds, isCartExpired, buildOwnerNote, withCartUtm, OWNER_NOTE_MARK } from './cartAttribution.js';
 
 const cart = {
   contactId: '5491164212370',
@@ -50,6 +50,27 @@ test('dos compras: cada una a un carrito distinto, y no reusa pedidos ya atribui
   assert.equal(assigned.get('c1')?.number, 501);
   assert.equal(assigned.get('c2')?.number, 502);
   assert.equal(assignCartOrders([c1], [o1], new Set(['1'])).size, 0);
+});
+
+test('listado: carritos rearmados por el mismo cliente van en una fila con la venta', () => {
+  const sale = { status: 'purchased', orderId: 1, orderNumber: 501, orderTotal: 9000, orderCreatedAt: '2026-10-23T15:00:00Z' };
+  const rows = groupCartRebuilds([
+    { id: 'a', contactId: 'X', createdAt: '2026-10-23T08:00:00Z', ...sale },
+    { id: 'b', contactId: 'X', createdAt: '2026-10-23T09:00:00Z', ...sale },
+    { id: 'c', contactId: 'X', createdAt: '2026-10-23T10:00:00Z', status: 'pending' },
+    { id: 'd', contactId: 'Y', createdAt: '2026-10-23T10:00:00Z', status: 'pending' },
+  ]);
+  assert.equal(rows.length, 2);
+  const x = rows.find(r => r.contactId === 'X');
+  assert.deepEqual([x.id, x.status, x.orderNumber, x.rebuilt], ['c', 'purchased', 501, 3]);
+});
+
+test('listado: después de comprar, un carrito nuevo es otra fila', () => {
+  const rows = groupCartRebuilds([
+    { id: 'a', contactId: 'X', createdAt: '2026-10-23T08:00:00Z', status: 'purchased', orderId: 1, orderCreatedAt: '2026-10-23T15:00:00Z' },
+    { id: 'b', contactId: 'X', createdAt: '2026-10-24T08:00:00Z', status: 'pending' },
+  ]);
+  assert.deepEqual(rows.map(r => [r.id, r.status, r.rebuilt]), [['a', 'purchased', 1], ['b', 'pending', 1]]);
 });
 
 test('acepta Timestamp de Firestore en createdAt', () => {

@@ -794,7 +794,10 @@ function BotCartStats({ periodQs }) {
             <tbody>
               {shown.map(c => (
                 <tr key={c.id} className={styles.rowLink} onClick={() => navigate(`/conversations?open=${encodeURIComponent(c.contactId)}`)}>
-                  <td>{fmtActivity(c.createdAt)}</td>
+                  <td>
+                    {fmtActivity(c.createdAt)}
+                    {c.rebuilt > 1 && <div className={styles.tileSub}>armado {c.rebuilt} veces</div>}
+                  </td>
                   <td>{c.contactId}</td>
                   <td>{c.items.map(i => `${i.quantity} x ${i.name}`).join(', ')}</td>
                   <td>{fmtMoney(c.total)}</td>

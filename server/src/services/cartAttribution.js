@@ -78,6 +78,44 @@ export function assignCartOrders(carts, orders, claimed = new Set()) {
   return result;
 }
 
+/**
+ * Junta en una fila los carritos que el mismo cliente rearmó (le pidió al bot
+ * cambios antes de comprar): cada carrito se suma al anterior del mismo
+ * contacto si está dentro de la ventana y ese grupo todavía no compró. La fila
+ * muestra el último carrito, la venta si la hubo y `rebuilt` = cuántas veces
+ * se armó.
+ * @param {Array<{ id, contactId, createdAt, status, orderId?, orderCreatedAt? }>} carts
+ */
+export function groupCartRebuilds(carts) {
+  const time = v => toDate(v)?.getTime() ?? 0;
+  const groups = [];
+  const open = new Map(); // contactId → grupo abierto
+  for (const cart of [...carts].sort((a, b) => time(a.createdAt) - time(b.createdAt))) {
+    const g = open.get(cart.contactId);
+    const closed = !g
+      || time(cart.createdAt) - time(g.last.createdAt) > CART_ATTRIBUTION_DAYS * DAY_MS
+      || (g.sale && time(g.sale.orderCreatedAt) <= time(cart.createdAt))
+      || (g.sale && cart.status === 'purchased' && String(cart.orderId) !== String(g.sale.orderId));
+    if (closed) {
+      const fresh = { last: cart, sale: null, count: 0 };
+      groups.push(fresh);
+      open.set(cart.contactId, fresh);
+    }
+    const cur = open.get(cart.contactId);
+    cur.last = cart;
+    cur.count++;
+    if (cart.status === 'purchased' && !cur.sale) cur.sale = cart;
+  }
+  return groups.map(({ last, sale, count }) => ({
+    ...last,
+    status: sale ? 'purchased' : last.status,
+    orderId: sale?.orderId ?? null,
+    orderNumber: sale?.orderNumber ?? null,
+    orderTotal: sale?.orderTotal ?? null,
+    rebuilt: count,
+  }));
+}
+
 /** El carrito ya no puede atribuirse a ninguna venta. */
 export function isCartExpired(cart, now = new Date()) {
   const created = toDate(cart.createdAt);

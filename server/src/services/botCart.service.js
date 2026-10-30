@@ -6,7 +6,7 @@
 import admin from 'firebase-admin';
 import { getDb } from './firebase.service.js';
 import { getPaidOrdersSince, setOrderOwnerNote } from './tiendanube.service.js';
-import { assignCartOrders, isCartExpired, buildOwnerNote, CART_ATTRIBUTION_DAYS } from './cartAttribution.js';
+import { assignCartOrders, groupCartRebuilds, isCartExpired, buildOwnerNote, CART_ATTRIBUTION_DAYS } from './cartAttribution.js';
 
 const COLLECTION = 'bot-entreno_bot_carts';
 
@@ -86,22 +86,22 @@ export async function getBotCartStats(start, end) {
     .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
     .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end))
     .get();
-  const carts = snap.docs
-    .map(d => {
-      const c = d.data();
-      return {
-        id: d.id,
-        contactId: c.contactId,
-        createdAt: c.createdAt?.toDate().toISOString() ?? null,
-        status: c.status,
-        total: c.total ?? 0,
-        items: (c.items ?? []).map(i => ({ name: i.name, quantity: i.quantity })),
-        orderId: c.orderId ?? null,
-        orderNumber: c.orderNumber ?? null,
-        orderTotal: c.orderTotal ?? null,
-      };
-    })
-    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  // Los carritos que el cliente rearmó antes de comprar van en una sola fila.
+  const carts = groupCartRebuilds(snap.docs.map(d => {
+    const c = d.data();
+    return {
+      id: d.id,
+      contactId: c.contactId,
+      createdAt: c.createdAt?.toDate().toISOString() ?? null,
+      status: c.status,
+      total: c.total ?? 0,
+      items: (c.items ?? []).map(i => ({ name: i.name, quantity: i.quantity })),
+      orderId: c.orderId ?? null,
+      orderNumber: c.orderNumber ?? null,
+      orderTotal: c.orderTotal ?? null,
+      orderCreatedAt: c.orderCreatedAt?.toDate().toISOString() ?? null,
+    };
+  })).sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 
   const count = s => carts.filter(c => c.status === s).length;
   // Un pedido cuenta una sola vez aunque haya carritos viejos atribuidos al mismo.
