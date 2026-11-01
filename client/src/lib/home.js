@@ -39,9 +39,15 @@ export function relTime(ts, now = new Date()) {
 
 /** Mensajes del bot con el resumen del día (1 o 2). */
 export function tediSummary(stats, { botName } = {}) { // eslint-disable-line no-unused-vars
-  const { total = 0, resolvedByBot = 0, escalatedCount = 0, awaitingAgent = 0, oldestAwaitingMin } = stats || {};
+  const { total = 0, resolvedByBot = 0, resolvedByAgent = 0, botResolutionRate = 0, escalatedCount = 0, awaitingAgent = 0, oldestAwaitingMin } = stats || {};
   if (!total) return ['Todavía no entró nadie hoy. Acá te aviso apenas llegue alguien 👀'];
-  const out = [`Hoy ya atendí ${total} ${total === 1 ? 'conversación' : 'conversaciones'} y resolví ${resolvedByBot} yo solo 💪`];
+  // Mismo número que la tarjeta "Resolvió …": de las que ya se cerraron, las
+  // que cerré sin nadie del equipo (antes se leía como "X de todas").
+  const resolved = resolvedByBot + resolvedByAgent;
+  const closed = resolved === 0
+    ? ' Todavía no se cerró ninguna.'
+    : ` De ${resolved === 1 ? 'la única que ya se cerró' : `las ${resolved} que ya se cerraron`}, resolví ${resolvedByBot} yo solo (${botResolutionRate}%) 💪`;
+  const out = [`Hoy ya atendí ${total} ${total === 1 ? 'conversación' : 'conversaciones'}.${closed}`];
   if (escalatedCount > 0) {
     let s = `Te pasé ${escalatedCount} que necesitaban a alguien del equipo.`;
     s += awaitingAgent > 0

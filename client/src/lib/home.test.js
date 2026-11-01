@@ -32,11 +32,14 @@ describe('tediSummary', () => {
     expect(tediSummary({ total: 0 }, { botName: 'TeDi' })).toEqual(['Todavía no entró nadie hoy. Acá te aviso apenas llegue alguien 👀']);
   });
   it('with waiting', () => {
-    expect(tediSummary({ total: 42, resolvedByBot: 31, escalatedCount: 8, awaitingAgent: 3, oldestAwaitingMin: 18 }, { botName: 'TeDi' }))
-      .toEqual(['Hoy ya atendí 42 conversaciones y resolví 31 yo solo 💪', 'Te pasé 8 que necesitaban a alguien del equipo. 3 te están esperando, la más vieja hace 18 min.']);
+    expect(tediSummary({ total: 42, resolvedByBot: 31, resolvedByAgent: 5, botResolutionRate: 86, escalatedCount: 8, awaitingAgent: 3, oldestAwaitingMin: 18 }, { botName: 'TeDi' }))
+      .toEqual(['Hoy ya atendí 42 conversaciones. De las 36 que ya se cerraron, resolví 31 yo solo (86%) 💪', 'Te pasé 8 que necesitaban a alguien del equipo. 3 te están esperando, la más vieja hace 18 min.']);
   });
   it('singular', () => {
-    expect(tediSummary({ total: 1, resolvedByBot: 1, escalatedCount: 0 }, { botName: 'TeDi' })).toEqual(['Hoy ya atendí 1 conversación y resolví 1 yo solo 💪']);
+    expect(tediSummary({ total: 1, resolvedByBot: 1, botResolutionRate: 100, escalatedCount: 0 }, { botName: 'TeDi' })).toEqual(['Hoy ya atendí 1 conversación. De la única que ya se cerró, resolví 1 yo solo (100%) 💪']);
+  });
+  it('nothing closed yet', () => {
+    expect(tediSummary({ total: 3 }, { botName: 'TeDi' })[0]).toBe('Hoy ya atendí 3 conversaciones. Todavía no se cerró ninguna.');
   });
   it('all attended', () => {
     expect(tediSummary({ total: 5, resolvedByBot: 2, escalatedCount: 3, awaitingAgent: 0 }, { botName: 'TeDi' })[1])

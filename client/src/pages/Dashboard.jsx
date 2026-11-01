@@ -155,7 +155,8 @@ export default function Dashboard() {
     {
       key: 'rate', label: `Resolvió ${botName}`, value: rate, suffix: '%', color: 'var(--brand)',
       delta: rateDelta === null ? null : signed(rateDelta, ' pts'), good: (rateDelta ?? 0) >= 0,
-      series: trend.map((d) => (d.started ? Math.round((d.resolvedByBot / d.started) * 100) : 0)),
+      // Mismo cálculo que el número grande: sobre las resueltas de cada día.
+      series: trend.map((d) => { const r = d.resolvedByBot + d.resolvedByAgent; return r ? Math.round((d.resolvedByBot / r) * 100) : 0; }),
     },
     {
       key: 'first', label: '1ª respuesta', text: firstLabel, color: 'var(--brand)',

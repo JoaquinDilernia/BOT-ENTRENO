@@ -58,6 +58,15 @@ function isInRange(ts, startMs, endMs) {
   return !!d && d.getTime() >= startMs && d.getTime() <= endMs;
 }
 
+// ¿Tuvo movimiento en el rango? Un mensaje, o se creó, derivó o cerró ahí.
+// No se usa updatedAt: cualquier cambio posterior lo pisa, y eso sacaba del
+// período (sobre todo del anterior, el de la comparación) charlas que sí
+// pasaron en él.
+export function hadActivityInRange(conv, startMs, endMs) {
+  if (isInRange(conv.createdAt, startMs, endMs) || isInRange(conv.escalatedAt, startMs, endMs) || isInRange(conv.resolvedAt, startMs, endMs)) return true;
+  return (conv.messages ?? []).some(m => isInRange(m.timestamp, startMs, endMs));
+}
+
 function resolveAreaForAssignee(assignee, areaIds, agentsByEmail) {
   if (!assignee) return null;
   if (areaIds.has(assignee)) return assignee;
@@ -107,7 +116,8 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
   const firstResponseSamples = [];
   const resolutionSamples = [];
 
-  for (const conv of conversations) {
+  const active = conversations.filter(c => hadActivityInRange(c, startMs, endMs));
+  for (const conv of active) {
     const rawStatus = conv.status ?? 'bot';
     const status    = rawStatus === 'urgent' ? 'bot' : rawStatus; // legado: 'urgent' era status, ahora es flag
 
@@ -236,7 +246,7 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
     .sort((a, b) => b.count - a.count);
 
   // --- Derived metrics ---
-  const total = conversations.length;
+  const total = active.length;
   const resolved = resolvedByBot + resolvedByAgent;
   // % de las conversaciones RESUELTAS que el bot cerró sin derivar a un agente.
   const botResolutionRate = resolved > 0 ? Math.round((resolvedByBot / resolved) * 100) : 0;

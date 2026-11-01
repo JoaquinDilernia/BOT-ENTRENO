@@ -2,7 +2,7 @@ import { Router } from 'express';
 import admin from 'firebase-admin';
 import { getDb } from '../services/firebase.service.js';
 import { requireAuth } from '../middleware/requireAuth.js';
-import { aggregateConversations, arMidnight, fromArWallClock, toDate, isoDate, previousRange } from '../services/statsAggregate.js';
+import { aggregateConversations, hadActivityInRange, arMidnight, fromArWallClock, toDate, isoDate, previousRange } from '../services/statsAggregate.js';
 import { waitingSummary } from '../services/waiting.js';
 import { getBotCartStats, reconcileBotCarts } from '../services/botCart.service.js';
 
@@ -51,14 +51,14 @@ router.get('/', async (req, res) => {
     // Período anterior: el mismo tramo corrido N días enteros (alineado a medianoche).
     const { prevStartMs, prevEndMs } = previousRange(startMs, endMs);
 
-    const convsInRange = (fromMs, toMs) => db.collection('bot-entreno_conversations')
+    // Una sola lectura desde el inicio del período anterior: lo que se movió
+    // después igual se trae, y cada período se queda con lo que pasó en él.
+    const convsSince = (fromMs) => db.collection('bot-entreno_conversations')
       .where('updatedAt', '>=', admin.firestore.Timestamp.fromMillis(fromMs))
-      .where('updatedAt', '<=', admin.firestore.Timestamp.fromMillis(toMs))
       .get();
 
-    const [snap, prevSnap, agentsSnap, areasSnap, urgentSnap, awaitingSnap, configDoc] = await Promise.all([
-      convsInRange(startMs, endMs),
-      convsInRange(prevStartMs, prevEndMs),
+    const [snap, agentsSnap, areasSnap, urgentSnap, awaitingSnap, configDoc] = await Promise.all([
+      convsSince(prevStartMs),
       db.collection('bot-entreno_agents').get(),
       db.collection('bot-entreno_areas').get(),
       db.collection('bot-entreno_conversations').where('urgent', '==', true).get(),
@@ -66,8 +66,9 @@ router.get('/', async (req, res) => {
       db.collection('bot-entreno_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
     ]);
 
-    const conversations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const prevConversations = prevSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const allConversations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const conversations = allConversations.filter(c => hadActivityInRange(c, startMs, endMs));
+    const prevConversations = allConversations;
     const agents = agentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const areas = areasSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const botConfig = configDoc.exists ? configDoc.data() : {};
@@ -164,11 +165,10 @@ router.get('/labels/conversations', async (req, res) => {
     const { start, end } = getPeriodRange(req.query.period ?? 'week', req.query.from, req.query.to);
     const snap = await getDb().collection('bot-entreno_conversations')
       .where('updatedAt', '>=', admin.firestore.Timestamp.fromDate(start))
-      .where('updatedAt', '<=', admin.firestore.Timestamp.fromDate(end))
       .get();
     const conversations = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(c => (c.labels ?? []).includes(label))
+      .filter(c => (c.labels ?? []).includes(label) && hadActivityInRange(c, start.getTime(), end.getTime()))
       .map(c => ({
         id: c.id,
         contactName: c.contactName ?? null,
