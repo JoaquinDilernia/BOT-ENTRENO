@@ -265,7 +265,7 @@ export async function fetchMetaTemplateStatuses() {
       `${META_API_URL}/${process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
       {
         headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
-        params: { fields: 'name,status,language', limit: 100 },
+        params: { fields: 'name,status,language,category,previous_category', limit: 100 },
       }
     );
     return data.data ?? [];

@@ -146,7 +146,7 @@ const META_ERROR_HINTS = {
   131049: "Meta no la entregó para no saturar al cliente con mensajes de marketing. No sirve reintentar ya: probá más tarde o esperá que escriba.",
   131026: "El número no tiene WhatsApp, o no puede recibir este mensaje (app vieja / no aceptó términos).",
   131048: "Meta frenó el envío por límite de spam / calidad del número. Esperá un rato antes de seguir enviando.",
-  130472: "Meta excluyó este número de los mensajes de marketing (experimento de Meta). No se puede enviar por ahora.",
+  130472: "Meta excluyó este número de los mensajes de marketing (experimento de Meta). Las plantillas de MARKETING no le llegan nunca: mandale una de UTILIDAD (ver categoría en Plantillas).",
   131050: "El cliente bloqueó los mensajes de marketing de esta empresa.",
   132001: "La plantilla no existe o no está aprobada en ese idioma.",
   132015: "La plantilla está pausada por baja calidad.",
@@ -1970,7 +1970,7 @@ export default function Conversations() {
                           <option value="">Seleccioná una plantilla aprobada...</option>
                           {approvedTemplates.map(t => (
                             <option key={t.id} value={t.id}>
-                              {t.displayName} ({t.name})
+                              {t.displayName} ({t.name}){t.category === 'MARKETING' ? ' · ⚠ Marketing' : ''}
                             </option>
                           ))}
                         </select>
@@ -2471,7 +2471,7 @@ export default function Conversations() {
                       if (!approved) return null;
                       return (
                         <option key={t.id} value={t.id}>
-                          ✓ {t.displayName} ({t.name})
+                          ✓ {t.displayName} ({t.name}){t.category === 'MARKETING' ? ' · ⚠ Marketing' : ''}
                         </option>
                       );
                     })}

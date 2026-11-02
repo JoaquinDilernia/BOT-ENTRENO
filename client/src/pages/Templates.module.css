@@ -408,3 +408,11 @@
 }
 .createBtn:hover:not(:disabled) { opacity: 0.85; }
 .createBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.recatNote {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #b45309;
+  cursor: help;
+}

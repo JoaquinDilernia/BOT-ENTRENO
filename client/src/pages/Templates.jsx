@@ -174,6 +174,14 @@ export default function Templates() {
                     </td>
                     <td className={styles.td}>
                       <span className={`${styles.catBadge} ${styles[`cat_${t.category}`]}`}>{t.category}</span>
+                      {t.previousCategory && t.previousCategory !== t.category && (
+                        <span
+                          className={styles.recatNote}
+                          title="Meta cambió la categoría después de crearla. Las de MARKETING no les llegan a los números del experimento de Meta (error 130472) y se cobran más caras."
+                        >
+                          Meta la pasó de {t.previousCategory}
+                        </span>
+                      )}
                     </td>
                     <td className={styles.td}>
                       <span className={`${styles.statusBadge} ${t.metaStatus ? styles[`status_${t.metaStatus}`] : styles.status_unknown}`}>

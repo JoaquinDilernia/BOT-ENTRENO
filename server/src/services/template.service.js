@@ -62,7 +62,12 @@ export async function syncTemplateStatuses() {
       metaTemplates.find(t => t.name === name && t.language === language) ??
       metaTemplates.find(t => t.name === name);
     if (metaMatch) {
-      batch.update(doc.ref, { metaStatus: metaMatch.status });
+      // Meta puede recategorizar una plantilla (ej. UTILITY → MARKETING) después
+      // de aprobarla; la categoría real define a quién le llega (error 130472).
+      const patch = { metaStatus: metaMatch.status };
+      if (metaMatch.category) patch.category = metaMatch.category;
+      patch.previousCategory = metaMatch.previous_category ?? null;
+      batch.update(doc.ref, patch);
     }
   }
   await batch.commit();
