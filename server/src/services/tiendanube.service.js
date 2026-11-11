@@ -401,6 +401,60 @@ export async function findCustomerByPhone(phone) {
 }
 
 /**
+ * Listado de pedidos para elegir destinatarios de una difusión (panel →
+ * Difusiones → "Elegir pedidos"). Más nuevos primero, una página por vez.
+ * El teléfono sale del primero que exista: cliente, contacto, facturación
+ * o envío (TN no siempre lo guarda en el mismo lugar).
+ *
+ * @returns {Promise<{ orders: object[], total: number|null, hasMore: boolean }>}
+ */
+export async function listOrdersForBroadcast({
+  page = 1, perPage = 50, q, status, paymentStatus, shippingStatus, createdAtMin, createdAtMax,
+} = {}) {
+  const params = {
+    fields: 'id,number,status,payment_status,shipping_status,created_at,total,customer,contact_name,contact_phone,billing_phone,shipping_address,products',
+    sort_by: 'created_at',
+    sort_direction: 'desc',
+    per_page: Math.min(Math.max(Number(perPage) || 50, 1), 200),
+    page: Math.max(Number(page) || 1, 1),
+  };
+  if (q?.trim()) params.q = q.trim().replace(/^#/, '');
+  if (status) params.status = status; // open | closed | cancelled | any
+  if (paymentStatus) params.payment_status = paymentStatus;
+  if (shippingStatus) params.shipping_status = shippingStatus;
+  if (createdAtMin) params.created_at_min = new Date(createdAtMin).toISOString();
+  if (createdAtMax) params.created_at_max = new Date(createdAtMax).toISOString();
+
+  let res;
+  try {
+    res = await client.get('/orders', { params });
+  } catch (err) {
+    // 404 = página vacía después de la última; 422 = tope de paginación de TN.
+    if ([404, 422].includes(err.response?.status)) return { orders: [], total: null, hasMore: false };
+    throw err;
+  }
+  const data = res.data ?? [];
+  const totalHeader = Number(res.headers?.['x-total-count']);
+  const orders = data.map(o => ({
+    id: o.id,
+    number: o.number,
+    createdAt: o.created_at,
+    status: o.status,
+    paymentStatus: o.payment_status,
+    shippingStatus: o.shipping_status,
+    total: o.total != null ? Number(o.total) : null,
+    name: o.customer?.name || o.contact_name || o.shipping_address?.name || null,
+    phone: o.customer?.phone || o.contact_phone || o.billing_phone || o.shipping_address?.phone || null,
+    products: (o.products ?? []).map(p => `${p.quantity > 1 ? `${p.quantity}x ` : ''}${p.name}`),
+  }));
+  return {
+    orders,
+    total: Number.isFinite(totalHeader) ? totalHeader : null,
+    hasMore: data.length === params.per_page,
+  };
+}
+
+/**
  * Obtiene los últimos pedidos de un cliente por su ID de TN.
  * @param {number} customerId
  * @returns {Promise<Array>}

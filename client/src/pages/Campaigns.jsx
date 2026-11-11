@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Campaigns.module.css';
+import CampaignOrderPicker from './CampaignOrderPicker';
 
 const STATUS_LABEL = { draft: 'Borrador', sending: 'Enviando…', sent: 'Enviada' };
 const STATUS_CLASS = { draft: 'statusDraft', sending: 'statusSending', sent: 'statusSent' };
 const EMPTY_SEGMENT = { q: '', channel: '', tags: [], hasOrders: false, spentMin: '', spentMonths: '12', product: '', productMonths: '12', orderCountMin: '', lastOrderMaxDays: '', lastOrderMinDays: '' };
-const DEFAULT_FORM = { name: '', templateId: '', targetUrl: '', segment: { ...EMPTY_SEGMENT } };
+const DEFAULT_FORM = { name: '', templateId: '', targetUrl: '', mode: 'orders', segment: { ...EMPTY_SEGMENT } };
+const SEND_STATUS_LABEL = { sending: 'Enviando', sent: 'Enviado', delivered: 'Entregado', read: 'Leído', error: 'Error' };
 
 function formatDate(ts) {
   if (!ts) return '—';
@@ -28,6 +30,7 @@ export default function Campaigns() {
   const [error, setError] = useState('');
   const [detail, setDetail] = useState(null); // { campaign, sends }
   const [sending, setSending] = useState(false);
+  const [selectedOrders, setSelectedOrders] = useState(() => new Map()); // nº pedido → pedido
   const pollRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -63,6 +66,7 @@ export default function Campaigns() {
   function openCreate() {
     setForm({ ...DEFAULT_FORM, segment: { ...EMPTY_SEGMENT } });
     setParams([]);
+    setSelectedOrders(new Map());
     setPreview(null);
     setError('');
     refreshPreview({ ...EMPTY_SEGMENT });
@@ -100,6 +104,8 @@ export default function Campaigns() {
   async function handleCreate(e) {
     e.preventDefault();
     if (!selectedTemplate) { setError('Elegí una plantilla aprobada'); return; }
+    const byOrders = form.mode === 'orders';
+    if (byOrders && selectedOrders.size === 0) { setError('Elegí al menos un pedido'); return; }
     setSaving(true);
     setError('');
     try {
@@ -113,6 +119,9 @@ export default function Campaigns() {
           paramsTemplate: params,
           targetUrl: form.targetUrl,
           segment: form.segment,
+          ...(byOrders && {
+            orders: [...selectedOrders.values()].map(o => ({ number: o.number, phone: o.phone, name: o.name ?? null })),
+          }),
         },
       });
       const data = await res.json();
@@ -149,7 +158,10 @@ export default function Campaigns() {
 
   async function handleSend() {
     if (!detail) return;
-    if (!confirm(`¿Mandar "${detail.campaign.name}" a ${preview?.whatsappCount ?? detail.campaign.stats.total} contactos? No se puede deshacer.`)) return;
+    const count = detail.campaign.source === 'orders'
+      ? (detail.campaign.recipients?.length ?? 0)
+      : (preview?.whatsappCount ?? detail.campaign.stats.total);
+    if (!confirm(`¿Mandar "${detail.campaign.name}" a ${count} contactos? No se puede deshacer.`)) return;
     setSending(true);
     try {
       const res = await authFetch(BASE_URL + `/api/campaigns/${detail.campaign.id}/send`, { method: 'POST' });
@@ -177,7 +189,7 @@ export default function Campaigns() {
         <div>
           <h1 className={styles.title}>Difusiones</h1>
           <p className={styles.subtitle}>
-            Mandá una plantilla aprobada a todos los contactos o a un segmento por tags, y
+            Mandá una plantilla aprobada a los pedidos de Tienda Nube que elijas o a un segmento de contactos, y
             mirá cuántos la recibieron, la leyeron y clickearon el link.
           </p>
         </div>
@@ -214,6 +226,7 @@ export default function Campaigns() {
                 <label className={styles.label}>Parámetros de la plantilla</label>
                 <p className={styles.hint}>
                   Podés usar <code>{'{{nombre}}'}</code> para el nombre del contacto,{' '}
+                  {form.mode === 'orders' && <><code>{'{{pedido}}'}</code> para el número de pedido (ej. #24366),{' '}</>}
                   <code>{'{{pedidos}}'}</code> para su cantidad de compras en Tienda Nube,{' '}
                   <code>{'{{gastado}}'}</code> para el total gastado
                   {form.targetUrl && <> y <code>{'{{link}}'}</code> para el link trackeado</>}.
@@ -238,6 +251,28 @@ export default function Campaigns() {
               <p className={styles.hint}>Si lo cargás, usalo como <code>{'{{link}}'}</code> en algún parámetro — cada contacto recibe un link corto propio para poder contar los clicks.</p>
             </div>
 
+            <div className={styles.field}>
+              <label className={styles.label}>Destinatarios</label>
+              <div className={styles.modeToggle}>
+                <button type="button" className={`${styles.modeBtn} ${form.mode === 'orders' ? styles.modeBtnActive : ''}`} onClick={() => setField('mode', 'orders')}>
+                  🛒 Elegir pedidos de Tienda Nube
+                </button>
+                <button type="button" className={`${styles.modeBtn} ${form.mode === 'segment' ? styles.modeBtnActive : ''}`} onClick={() => setField('mode', 'segment')}>
+                  👥 Segmento de contactos
+                </button>
+              </div>
+            </div>
+
+            {form.mode === 'orders' && (
+              <div className={styles.field}>
+                <CampaignOrderPicker selected={selectedOrders} onChange={setSelectedOrders} />
+                <p className={styles.previewCount}>
+                  📤 <strong>{selectedOrders.size}</strong> pedido{selectedOrders.size === 1 ? '' : 's'} elegido{selectedOrders.size === 1 ? '' : 's'}. Si una misma persona tiene varios, recibe un solo mensaje.
+                </p>
+              </div>
+            )}
+
+            {form.mode === 'segment' && (
             <div className={styles.field}>
               <label className={styles.label}>Segmento</label>
               <div className={styles.segmentRow}>
@@ -307,6 +342,7 @@ export default function Campaigns() {
                 ) : ''}
               </p>
             </div>
+            )}
 
             {error && <p className={styles.error}>{error}</p>}
             <div className={styles.formActions}>
@@ -338,6 +374,8 @@ export default function Campaigns() {
               <Stat label="Leídos" value={detail.campaign.stats.read} tone="info" />
               <Stat label="Clicks" value={detail.campaign.stats.clicked} tone="success" />
             </div>
+
+            <RecipientList detail={detail} />
 
             {detail.campaign.status === 'draft' && (
               <button className={styles.btnPrimary} onClick={handleSend} disabled={sending}>
@@ -384,6 +422,37 @@ export default function Campaigns() {
             </div>
           )
         )}
+      </div>
+    </div>
+  );
+}
+
+function RecipientList({ detail }) {
+  const { campaign, sends = [] } = detail;
+  const sendsById = new Map(sends.map(s => [s.contactId, s]));
+  const rows = campaign.source === 'orders'
+    ? (campaign.recipients ?? []).map(r => ({ ...r, ...(sendsById.get(r.contactId) ?? {}) }))
+    : sends;
+  if (rows.length === 0) return null;
+  return (
+    <div className={styles.recipients}>
+      <p className={styles.label}>
+        Destinatarios ({rows.length})
+        {campaign.skippedOrders?.length > 0 && (
+          <span className={styles.hint}> · sin teléfono válido, no se envían: {campaign.skippedOrders.map(n => '#' + n).join(', ')}</span>
+        )}
+      </p>
+      <div className={styles.recipientsList}>
+        {rows.map(r => (
+          <div key={r.contactId} className={styles.recipientRow}>
+            <span>{r.orderNumbers?.length ? r.orderNumbers.map(n => '#' + n).join(', ') : '—'}</span>
+            <span>{r.contactName ?? '—'}</span>
+            <span className={styles.muted}>+{r.contactId}</span>
+            <span className={r.status === 'error' ? styles.error : styles.muted} title={r.error ?? ''}>
+              {r.status ? (SEND_STATUS_LABEL[r.status] ?? r.status) : 'Pendiente'}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

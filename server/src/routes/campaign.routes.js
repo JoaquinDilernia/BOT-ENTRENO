@@ -8,6 +8,7 @@ import {
   sendCampaign,
   resolveSegment,
 } from '../services/campaign.service.js';
+import { listOrdersForBroadcast } from '../services/tiendanube.service.js';
 
 const router = Router();
 
@@ -35,11 +36,27 @@ router.post('/preview-segment', async (req, res) => {
   }
 });
 
+// Pedidos de Tienda Nube para elegir destinatarios a mano (modo "pedidos").
+router.get('/tn-orders', async (req, res) => {
+  try {
+    const { page, perPage, q, status, paymentStatus, shippingStatus, from, to } = req.query;
+    res.json(await listOrdersForBroadcast({
+      page, perPage, q, status, paymentStatus, shippingStatus,
+      createdAtMin: from || null,
+      // "hasta" inclusive: fin del día elegido (hora Argentina)
+      createdAtMax: to ? `${to}T23:59:59-03:00` : null,
+    }));
+  } catch (err) {
+    console.error('[campaigns] tn-orders:', err.response?.data ?? err.message);
+    res.status(502).json({ error: 'No se pudieron traer los pedidos de Tienda Nube' });
+  }
+});
+
 router.post('/', async (req, res) => {
   try {
-    const { name, templateName, language, category, paramsTemplate, targetUrl, segment } = req.body;
+    const { name, templateName, language, category, paramsTemplate, targetUrl, segment, orders } = req.body;
     const campaign = await createCampaign({
-      name, templateName, language, category, paramsTemplate, targetUrl, segment,
+      name, templateName, language, category, paramsTemplate, targetUrl, segment, orders,
       createdBy: req.agent?.email ?? null,
     });
     res.status(201).json({ campaign });

@@ -141,11 +141,48 @@ export async function resolveSegment(segment = {}) {
   return listCustomers(segmentToFilters(segment));
 }
 
-export async function createCampaign({ name, templateName, language, category, paramsTemplate, targetUrl, segment, createdBy }) {
+const MAX_ORDER_RECIPIENTS = 2000;
+
+/**
+ * Destinatarios elegidos a mano desde los pedidos de Tienda Nube. Agrupa por
+ * teléfono canónico: si la misma persona tiene 2 pedidos elegidos recibe UN
+ * solo mensaje, y {{pedido}} lista los dos números ("#24382, #24381").
+ * Los pedidos sin teléfono válido se descartan (y se informan).
+ */
+export function buildOrderRecipients(orders = []) {
+  const byContact = new Map();
+  const skipped = [];
+  for (const o of orders) {
+    const number = String(o?.number ?? '').replace(/^#/, '').trim();
+    const contactId = toWaContactId(o?.phone);
+    if (!contactId || contactId.length < 10) { skipped.push(number || '?'); continue; }
+    const cur = byContact.get(contactId);
+    if (cur) {
+      if (number && !cur.orderNumbers.includes(number)) cur.orderNumbers.push(number);
+      if (!cur.contactName && o.name) cur.contactName = o.name;
+    } else {
+      byContact.set(contactId, { contactId, contactName: o?.name?.trim() || null, orderNumbers: number ? [number] : [], channel: 'whatsapp' });
+    }
+  }
+  return { recipients: [...byContact.values()], skipped };
+}
+
+export async function createCampaign({ name, templateName, language, category, paramsTemplate, targetUrl, segment, orders, createdBy }) {
   if (!name?.trim() || !templateName?.trim()) {
     const e = new Error('name y templateName son requeridos');
     e.status = 400;
     throw e;
+  }
+  let orderRecipients = null;
+  let skippedOrders = [];
+  if (Array.isArray(orders)) {
+    if (orders.length > MAX_ORDER_RECIPIENTS) {
+      const e = new Error(`Máximo ${MAX_ORDER_RECIPIENTS} pedidos por difusión`); e.status = 400; throw e;
+    }
+    ({ recipients: orderRecipients, skipped: skippedOrders } = buildOrderRecipients(orders));
+    if (orderRecipients.length === 0) {
+      const e = new Error('Ninguno de los pedidos elegidos tiene un teléfono válido'); e.status = 400; throw e;
+    }
   }
   const db = getDb();
   const num = (v) => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
@@ -169,11 +206,15 @@ export async function createCampaign({ name, templateName, language, category, p
       lastOrderMaxDays: num(segment?.lastOrderMaxDays),
       lastOrderMinDays: num(segment?.lastOrderMinDays),
     },
+    // Modo "pedidos": lista fija elegida en el panel (ignora el segmento).
+    source: orderRecipients ? 'orders' : 'segment',
+    recipients: orderRecipients,
+    skippedOrders,
     status: 'draft',
     createdBy: createdBy ?? null,
     createdAt: new Date(),
     sentAt: null,
-    stats: { total: 0, sent: 0, failed: 0, delivered: 0, read: 0, clicked: 0 },
+    stats: { total: orderRecipients?.length ?? 0, sent: 0, failed: 0, delivered: 0, read: 0, clicked: 0 },
   };
   const ref = await db.collection(CAMPAIGNS).add(doc);
   return { id: ref.id, ...doc };
@@ -189,7 +230,9 @@ export async function deleteCampaign(id) {
 }
 
 function interpolate(template, contact, link) {
+  const pedidos = (contact.orderNumbers ?? []).map(n => `#${n}`).join(', ');
   return (template ?? '')
+    .replace(/{{s*pedidos*}}/gi, pedidos)
     .replace(/\{\{\s*nombre\s*\}\}/gi, contact.contactName || 'Cliente')
     .replace(/\{\{\s*link\s*\}\}/gi, link ?? '')
     .replace(/\{\{\s*pedidos\s*\}\}/gi, String(contact.tnOrderCount ?? 0))
@@ -212,7 +255,9 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
   if (!campaign) { const e = new Error('Campaña no encontrada'); e.status = 404; throw e; }
   if (campaign.status !== 'draft') { const e = new Error('Esta campaña ya se envió'); e.status = 409; throw e; }
 
-  const recipients = (await resolveSegment(campaign.segment)).filter(c => c.channel === 'whatsapp');
+  const recipients = campaign.source === 'orders'
+    ? (campaign.recipients ?? []).map(r => ({ ...r }))
+    : (await resolveSegment(campaign.segment)).filter(c => c.channel === 'whatsapp');
 
   await db.collection(CAMPAIGNS).doc(campaignId).update({
     status: 'sending',
@@ -256,6 +301,7 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
 
         await db.collection(SENDS).doc(sendId).set({
           campaignId, contactId: contact.contactId, contactName: contact.contactName ?? null,
+          orderNumbers: contact.orderNumbers ?? null,
           waMsgId: waMsgId ?? null, shortCode,
           status: sendError ? 'error' : 'sent',
           error: sendError ?? null,
@@ -268,6 +314,7 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
         console.error(`[campaign] Error mandándole a ${contact.contactId}:`, err.message);
         await db.collection(SENDS).doc(sendId).set({
           campaignId, contactId: contact.contactId, contactName: contact.contactName ?? null,
+          orderNumbers: contact.orderNumbers ?? null,
           waMsgId: null, shortCode: null, status: 'error', error: err.message,
           sentAt: new Date(), deliveredAt: null, readAt: null, clickedAt: null,
         }, { merge: true });

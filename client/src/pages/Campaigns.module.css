@@ -277,3 +277,94 @@
 }
 .advInput:focus { border-color: var(--color-primary-light); }
 .advInputWide { width: 180px; }
+
+/* ── Destinatarios: elegir pedidos de Tienda Nube ── */
+.modeToggle { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.modeBtn {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.modeBtnActive { border-color: var(--color-primary); background: var(--color-primary); color: #fff; }
+
+.picker { display: flex; flex-direction: column; gap: var(--space-2); }
+.pickerFilters { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pickerFilters > .input { flex: 1 1 160px; min-width: 0; }
+.pickerFilters > .input[type="search"] { flex-basis: 240px; }
+.pickerDate { display: flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-text-faint); }
+.pickerBar { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.pickerBarActions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+
+.pastePanel {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.pasteArea {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-sm);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.orderTable {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  max-height: 460px;
+  overflow: auto;
+}
+.orderHead, .orderRow {
+  display: grid;
+  grid-template-columns: 32px 110px minmax(140px, 1.2fr) minmax(160px, 2fr) minmax(140px, 1.2fr) 90px;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  min-width: 720px;
+}
+.orderHead {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--color-surface-alt);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+}
+.orderRow { border-bottom: 1px solid var(--color-border); font-size: var(--font-size-sm); cursor: pointer; }
+.orderRow:hover { background: var(--color-surface-alt); }
+.orderRowChecked { background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
+.orderRowDisabled { opacity: 0.5; cursor: not-allowed; }
+.orderSub { display: block; font-size: var(--font-size-xs); color: var(--color-text-faint); }
+.orderProducts { font-size: var(--font-size-xs); color: var(--color-text-faint); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.alignRight { text-align: right; }
+.selectedBox { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.recipients { display: flex; flex-direction: column; gap: var(--space-2); }
+.recipientsList {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  max-height: 360px;
+  overflow: auto;
+}
+.recipientRow {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1.2fr 0.8fr;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+.recipientRow:last-child { border-bottom: none; }
