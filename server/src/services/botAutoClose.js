@@ -40,6 +40,7 @@ export async function closeIdleBotConversations() {
       resolvedAt: lastAt,
       resolvedBy: conv.assignedTo ?? null,
       waitingSince: null,
+      unread: 0,
       autoClosed: true,
       updatedAt: new Date(),
     });

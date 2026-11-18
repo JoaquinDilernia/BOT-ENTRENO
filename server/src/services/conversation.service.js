@@ -136,6 +136,8 @@ export async function updateConversationStatus(contactId, status) {
   if (status === 'resolved' || status === 'bot_archived') {
     update.resolvedAt = new Date();
     update.waitingSince = null;
+    // Archivada = nada pendiente: sin esto quedaba el globito de no leídos.
+    update.unread = 0;
   }
   await db.collection(COLLECTION).doc(contactId).update(update);
 }
@@ -176,6 +178,7 @@ export async function dispatchConversation(contactId, patch) {
 
   if (patch.status !== undefined) {
     update.status = patch.status;
+    if (patch.status === 'resolved' || patch.status === 'bot_archived') update.unread = 0;
     const wasAlreadyClosed = ['resolved', 'bot_archived'].includes(current.status);
     if ((patch.status === 'resolved' || patch.status === 'bot_archived') && !wasAlreadyClosed) {
       update.resolvedAt = new Date();
